@@ -242,7 +242,7 @@ Local Machine                    vast.ai Instance
 
 | File | Description |
 |------|-------------|
-| `gpu_runner.py` | Main CLI orchestrator (7-stage pipeline, retry, health check) |
+| `gpu_runner.py` | Main CLI orchestrator (8-stage pipeline, smoke test, retry, health check) |
 | `vastai_manager.py` | vast.ai Python API (search, create, destroy, SSH, tunnels, health check) |
 | `r2_manager.py` | Cloudflare R2 S3 client (parallel uploads/downloads, retry) |
 | `setup_ssh.py` | One-command SSH key setup |
@@ -257,11 +257,16 @@ Local Machine                    vast.ai Instance
 | Issue | Workaround |
 |-------|-----------|
 | vast.ai host has broken GPU/Docker | Auto-retry on different host (up to 3) |
-| SSH port forwarding fails on host | SSH health check detects, retries |
+| SSH port forwarding fails on host | SSH health check integrated into boot, retries automatically |
 | `vastai/pytorch` missing torch on some hosts | Always pip install torch (no-op if present) |
-| HF image (15GB) takes 5+ min to pull | Use `vastai/pytorch` + pip install instead |
-| TensorBoard no direct port access | SSH tunnel fallback |
-| Windows Git Bash path translation | Avoid /tmp in Python, use project dir |
+| HF image (15GB) takes 5+ min to pull | Always use `vastai/pytorch` + pip install |
+| TensorBoard no direct port access | SSH tunnel opened automatically in background |
+| Boot timeout on slow image builds | Activity-based timeout (waits as long as progress happening) |
+| Missing packages (sentencepiece, etc.) | Local smoke test catches import errors before launch |
+| Results in subdirectories not uploaded | Fixed: `glob('results/**/*', recursive=True)` with preserved paths |
+| Unicode chars crash Windows console | All output uses ASCII only |
+| Embedded Python quotes break bash | Upload script to R2 as file, not inline `&&` chains |
+| pip install takes 5-8 min | Removed `--no-cache-dir`; use `--keep-alive` for sequential runs |
 
 ## Cost
 
