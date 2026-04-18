@@ -314,3 +314,79 @@ def ssh_command(instance_id: int) -> str:
     if ssh_host and ssh_port:
         return f"ssh -i {private_key} -p {ssh_port} root@{ssh_host}"
     return ""
+
+
+def get_connection_info(instance_id: int) -> dict:
+    """Get all connection details for a running instance (SSH, ports, IP)."""
+    info = get_instance(instance_id)
+    if not isinstance(info, dict):
+        return {}
+
+    ssh_host = info.get("ssh_host", "")
+    ssh_port = info.get("ssh_port", "")
+    public_ip = info.get("public_ipaddr", "")
+    ports = info.get("ports", {})
+    private_key = get_ssh_private_key_path()
+
+    result = {
+        "ssh_host": ssh_host,
+        "ssh_port": ssh_port,
+        "public_ip": public_ip,
+        "ssh_command": f"ssh -i {private_key} -p {ssh_port} root@{ssh_host}" if ssh_host else "",
+        "port_mappings": {},
+    }
+
+    # Parse port mappings: vast.ai maps container ports to host ports
+    # Format varies: could be dict like {"8080/tcp": [{"HostPort": "12345"}]}
+    if isinstance(ports, dict):
+        for container_port, mappings in ports.items():
+            if isinstance(mappings, list) and mappings:
+                host_port = mappings[0].get("HostPort", "")
+                if host_port:
+                    result["port_mappings"][container_port] = {
+                        "host_port": host_port,
+                        "url": f"http://{public_ip}:{host_port}",
+                    }
+
+    return result
+
+
+def port_forward(instance_id: int, remote_port: int, local_port: int = None) -> str:
+    """Get SSH port forwarding command. Maps remote_port on instance to local_port on your machine."""
+    if local_port is None:
+        local_port = remote_port
+    info = get_instance(instance_id)
+    if not isinstance(info, dict):
+        return ""
+    ssh_host = info.get("ssh_host", "")
+    ssh_port = info.get("ssh_port", "")
+    private_key = get_ssh_private_key_path()
+    if ssh_host and ssh_port:
+        cmd = (f"ssh -i {private_key} -p {ssh_port} root@{ssh_host} "
+               f"-L {local_port}:localhost:{remote_port} -N")
+        return cmd
+    return ""
+
+
+def open_tunnel(instance_id: int, remote_port: int, local_port: int = None):
+    """Open an SSH tunnel in the background. Returns the subprocess."""
+    if local_port is None:
+        local_port = remote_port
+    info = get_instance(instance_id)
+    if not isinstance(info, dict):
+        raise RuntimeError(f"Instance {instance_id} not found")
+    ssh_host = info.get("ssh_host", "")
+    ssh_port = info.get("ssh_port", "")
+    private_key = get_ssh_private_key_path()
+    if not ssh_host or not ssh_port:
+        raise RuntimeError(f"No SSH info for instance {instance_id}")
+
+    print(f"  [vast] Opening tunnel: localhost:{local_port} -> instance:{remote_port}")
+    proc = subprocess.Popen(
+        ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+         "-i", str(private_key), "-p", str(ssh_port), f"root@{ssh_host}",
+         "-L", f"{local_port}:localhost:{remote_port}", "-N"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    print(f"  [vast] Tunnel open: http://localhost:{local_port}")
+    return proc
