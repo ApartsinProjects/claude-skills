@@ -500,35 +500,74 @@ phase_markers = {
     "=== DONE ===": "done",
 }
 
+def _ssh_tail(host, port, lines=40):
+    """Fetch app logs via SSH from /var/log/onstart.log."""
+    key = Path.home() / ".ssh" / "gpu2vast_ed25519"
+    if not key.exists():
+        return ""
+    try:
+        r = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no",
+             "-o", "BatchMode=yes", "-i", str(key),
+             "-p", str(port), f"root@{host}",
+             f"tail -{lines} /var/log/onstart.log 2>/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+# Get SSH connection info
+inst_info = vast.get_instance(instance_id)
+ssh_host = inst_info.get("ssh_host", "") if isinstance(inst_info, dict) else ""
+ssh_port = inst_info.get("ssh_port", "") if isinstance(inst_info, dict) else ""
+print(f"  SSH: root@{ssh_host}:{ssh_port}")
+last_ssh_check = 0
+
 print("-" * 50)
 while time.time() - start < max_wait:
     elapsed = int(time.time() - start)
 
     done = r2.get_done(bucket)
     if done:
-        # Final log fetch to capture phases that arrived after last poll
-        log_output = vast.get_logs(instance_id, tail=200)
-        if log_output:
-            for line in log_output.strip().split("\n"):
-                line = line.strip()
-                if line and line not in seen_lines:
-                    seen_lines.add(line)
-                    print(f"  [{elapsed:3d}s] {line.encode('ascii', 'replace').decode()}")
-                    for marker, phase in phase_markers.items():
-                        if marker in line:
-                            seen_phases[phase] = True
+        # Final log fetch via SSH
+        if ssh_host and ssh_port:
+            ssh_out = _ssh_tail(ssh_host, ssh_port, lines=200)
+            if ssh_out:
+                for line in ssh_out.split("\n"):
+                    line = line.strip()
+                    if line and line not in seen_lines:
+                        seen_lines.add(line)
+                        print(f"  [{elapsed:3d}s] {line.encode('ascii', 'replace').decode()}")
+                        for marker, phase in phase_markers.items():
+                            if marker in line:
+                                seen_phases[phase] = True
         print(f"\n  Job completed: {done.get('status')} ({elapsed}s)")
         break
 
-    if time.time() - last_log_check >= 5:
+    # SSH log streaming (app output) every 5s
+    if ssh_host and ssh_port and time.time() - last_ssh_check >= 5:
+        ssh_out = _ssh_tail(ssh_host, ssh_port)
+        if ssh_out:
+            for line in ssh_out.split("\n"):
+                line = line.strip()
+                if line and line not in seen_lines:
+                    seen_lines.add(line)
+                    print(f"  [{elapsed:3d}s] [app] {line.encode('ascii', 'replace').decode()}")
+                    for marker, phase in phase_markers.items():
+                        if marker in line:
+                            seen_phases[phase] = True
+        last_ssh_check = time.time()
+
+    # vast.ai system logs every 10s
+    if time.time() - last_log_check >= 10:
         log_output = vast.get_logs(instance_id, tail=80)
         if log_output:
             for line in log_output.strip().split("\n"):
                 line = line.strip()
                 if line and line not in seen_lines:
                     seen_lines.add(line)
-                    print(f"  [{elapsed:3d}s] {line.encode('ascii', 'replace').decode()}")
-
+                    print(f"  [{elapsed:3d}s] [sys] {line.encode('ascii', 'replace').decode()}")
                     for marker, phase in phase_markers.items():
                         if marker in line:
                             seen_phases[phase] = True
@@ -644,9 +683,9 @@ try:
 except Exception as e:
     check("Instance destroyed", False, str(e))
 
-# Verify instance is actually gone (vast.ai takes a few seconds to process)
+# Verify instance is actually gone (vast.ai takes 10-20s to fully process)
 print("  Verifying instance is gone...")
-time.sleep(10)
+time.sleep(20)
 still_alive = vast.is_instance_alive(instance_id)
 check("Instance confirmed deleted", not still_alive,
       f"instance {instance_id} still alive" if still_alive else "")

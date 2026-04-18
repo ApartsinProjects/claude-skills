@@ -259,17 +259,7 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
             # Check progress
             progress = r2.get_progress(bucket)
             if progress:
-                step = progress.get("step", "?")
-                total = progress.get("total", "?")
-                loss = progress.get("loss", "?")
-                gpu_info = progress.get("gpu", {})
-                gpu_util = gpu_info.get("gpu_util", "?")
-                mins = elapsed / 60
-
-                bar_pct = int(step) / int(total) * 100 if str(step).isdigit() and str(total).isdigit() else 0
-                bar = "█" * int(bar_pct / 5) + "░" * (20 - int(bar_pct / 5))
-
-                print(f"\r  {bar} {step}/{total}  loss={loss}  GPU={gpu_util}%  {mins:.0f}min  ", end="", flush=True)
+                _display_progress(progress, elapsed)
                 stale_count = 0
             else:
                 stale_count += 1
@@ -288,6 +278,76 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
             last_r2_check = now
 
         time.sleep(poll_interval)
+
+
+_last_phase = None
+
+
+def _display_progress(progress, elapsed):
+    """Display rich progress info from R2 progress.json."""
+    global _last_phase
+    step = progress.get("step", "?")
+    total = progress.get("total", "?")
+    loss = progress.get("loss", "")
+    epoch = progress.get("epoch", "")
+    phase = progress.get("phase", "")
+    gpu_info = progress.get("gpu", {})
+    gpu_util = gpu_info.get("gpu_util", "?")
+    gpu_mem = gpu_info.get("mem_used", "?")
+    gpu_total = gpu_info.get("mem_total", "?")
+    val_loss = progress.get("val_loss", "")
+    accuracy = progress.get("accuracy", "")
+    mins = elapsed / 60
+
+    # Phase change announcement
+    if phase and phase != _last_phase and phase != "unknown":
+        phase_labels = {
+            "model_loading": "Loading model",
+            "data_loading": "Loading data",
+            "tokenizing": "Tokenizing",
+            "downloading_weights": "Downloading weights",
+            "training": "Training",
+            "evaluating": "Evaluating",
+            "saving_model": "Saving model",
+            "uploading_results": "Uploading results",
+            "done": "Done",
+        }
+        label = phase_labels.get(phase, phase)
+        _safe_print(f"\n  >> Phase: {label}")
+        _last_phase = phase
+
+    # Progress bar + metrics
+    parts = []
+    if str(step).isdigit() and str(total).isdigit():
+        bar_pct = int(step) / int(total) * 100
+        bar_len = 20
+        filled = int(bar_pct / 100 * bar_len)
+        bar = "#" * filled + "-" * (bar_len - filled)
+        parts.append(f"[{bar}] {step}/{total}")
+    if epoch:
+        parts.append(f"ep={epoch}")
+    if loss:
+        parts.append(f"loss={loss}")
+    if val_loss:
+        parts.append(f"val={val_loss}")
+    if accuracy:
+        parts.append(f"acc={accuracy}")
+    parts.append(f"GPU={gpu_util}%")
+    if gpu_mem != "?" and gpu_total != "?":
+        parts.append(f"VRAM={gpu_mem}/{gpu_total}MB")
+    parts.append(f"{mins:.0f}min")
+
+    _safe_print(f"\r  {'  '.join(parts)}    ")
+
+    # Show recent log lines if available
+    recent = progress.get("recent_lines", [])
+    if recent and phase in ("training", "evaluating"):
+        for line in recent[-2:]:
+            if line not in _display_progress._shown:
+                _display_progress._shown.add(line)
+                _safe_print(f"    {line}")
+
+_display_progress._shown = set()
 
 
 def _safe_print(text):
