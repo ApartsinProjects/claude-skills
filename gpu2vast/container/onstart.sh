@@ -1,27 +1,29 @@
 #!/bin/bash
 # GPU2Vast On-Start Script for vast.ai instances
-# Runs automatically when instance boots.
 set -eo pipefail
 
-echo "[GPU2Vast] Starting job: $JOB_ID"
-echo "[GPU2Vast] Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 || echo unknown)"
+SECONDS=0
+ts() { echo "[GPU2Vast] [${SECONDS}s] $1"; }
 
-# 1. Install Python packages (using uv if available, else pip)
-echo "[GPU2Vast] Installing packages..."
+ts "Starting job: $JOB_ID"
+ts "Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 || echo unknown)"
+ts "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'detecting...')"
+
+# 1. Install packages
+ts "Installing packages..."
+T0=$SECONDS
 if command -v uv &> /dev/null; then
     uv pip install --system boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard 2>&1 \
-        | grep -E "Installing|Downloading|already satisfied|Successfully" || true
+        bitsandbytes sentence-transformers datasets requests tensorboard
 else
-    pip install --no-cache-dir boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard 2>&1 \
-        | grep -E "Installing|Downloading|already satisfied|Successfully" || true
+    pip install boto3 torch transformers accelerate peft trl \
+        bitsandbytes sentence-transformers datasets requests tensorboard
 fi
-echo "[GPU2Vast] Packages installed"
+ts "Packages installed ($((SECONDS - T0))s)"
 
-# 2. Configure HuggingFace token if provided
+# 2. HuggingFace token
 if [ -n "$HF_TOKEN" ]; then
-    echo "[GPU2Vast] Configuring HuggingFace token..."
+    ts "Configuring HuggingFace token..."
     python3 -c "
 from huggingface_hub import login
 import os
@@ -29,13 +31,14 @@ token = os.environ.get('HF_TOKEN', '')
 if token:
     login(token=token, add_to_git_credential=False)
     print('  HuggingFace token configured')
-" 2>/dev/null || echo "  HF login skipped (huggingface_hub not available)"
+" 2>/dev/null || echo "  HF login skipped"
 fi
 
-# 3. Download experiment data from R2
-echo "[GPU2Vast] Downloading data from R2..."
+# 3. Download data from R2
+ts "Downloading data from R2..."
+T0=$SECONDS
 python3 -c "
-import boto3, json, os
+import boto3, os, time
 from pathlib import Path
 
 ws = Path('/workspace/data')
@@ -48,10 +51,10 @@ s3 = boto3.client('s3',
     region_name='auto')
 
 bucket = os.environ['R2_BUCKET']
-paginator = s3.get_paginator('list_objects_v2')
 count = 0
 total_bytes = 0
-for page in paginator.paginate(Bucket=bucket, Prefix='data/'):
+t0 = time.time()
+for page in s3.get_paginator('list_objects_v2').paginate(Bucket=bucket, Prefix='data/'):
     for obj in page.get('Contents', []):
         key = obj['Key']
         local = ws / key.replace('data/', '', 1)
@@ -59,57 +62,53 @@ for page in paginator.paginate(Bucket=bucket, Prefix='data/'):
         s3.download_file(bucket, key, str(local))
         count += 1
         total_bytes += obj['Size']
-        print(f'  Downloaded: {key} ({obj[\"Size\"]:,} bytes)')
-print(f'[GPU2Vast] Downloaded {count} files ({total_bytes:,} bytes total)')
+        print(f'  {key} ({obj[\"Size\"]:,} bytes)')
+elapsed = time.time() - t0
+speed = total_bytes / elapsed / 1024 / 1024 if elapsed > 0 else 0
+print(f'[GPU2Vast] Downloaded {count} files ({total_bytes:,} bytes) in {elapsed:.1f}s ({speed:.1f} MB/s)')
 "
+ts "Data download complete ($((SECONDS - T0))s)"
 
-# 4. Install extra requirements if present
+# 4. Extra requirements
 if [ -f /workspace/data/requirements.txt ]; then
-    echo "[GPU2Vast] Installing extra requirements..."
+    ts "Installing extra requirements..."
     pip install -q -r /workspace/data/requirements.txt
-    echo "[GPU2Vast] Extra requirements installed"
+    ts "Extra requirements installed"
 fi
 
-# 5. Copy and start progress reporter + checkpoint streamer in background
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SCRIPT_DIR/progress_reporter.py" ]; then
-    cp "$SCRIPT_DIR/progress_reporter.py" /workspace/progress_reporter.py
-elif [ -f /workspace/data/progress_reporter.py ]; then
+# 5. Progress reporter
+if [ -f /workspace/data/progress_reporter.py ]; then
     cp /workspace/data/progress_reporter.py /workspace/progress_reporter.py
 fi
-
 if [ -f /workspace/progress_reporter.py ]; then
-    echo "[GPU2Vast] Starting progress reporter..."
+    ts "Starting progress reporter"
     python3 /workspace/progress_reporter.py &
     REPORTER_PID=$!
 else
-    echo "[GPU2Vast] Warning: progress_reporter.py not found, inline fallback"
     REPORTER_PID=""
 fi
 
-# 6. Start TensorBoard in background (port 6006)
-echo "[GPU2Vast] Starting TensorBoard on port 6006..."
-pip install -q tensorboard 2>/dev/null
+# 6. TensorBoard
+ts "Starting TensorBoard on port 6006"
 mkdir -p /workspace/data/runs
-tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 2>/dev/null &
-TB_PID=$!
-echo "[GPU2Vast] TensorBoard running (PID=$TB_PID, port=6006)"
+nohup tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 &
 
 # 7. Run experiment
-echo "[GPU2Vast] Running: $EXPERIMENT_CMD"
+ts "Running: $EXPERIMENT_CMD"
+T0=$SECONDS
 cd /workspace/data
 eval "$EXPERIMENT_CMD" > >(tee /workspace/stdout.log) 2>&1
 EXIT_CODE=$?
+ts "Training finished (exit=$EXIT_CODE, ${SECONDS}s total, $((SECONDS - T0))s training)"
 
 # 8. Stop reporter
-if [ -n "$REPORTER_PID" ]; then
-    kill $REPORTER_PID 2>/dev/null || true
-fi
+[ -n "$REPORTER_PID" ] && kill $REPORTER_PID 2>/dev/null || true
 
-# 8. Upload all results to R2
-echo "[GPU2Vast] Uploading results..."
+# 9. Upload results
+ts "Uploading results to R2..."
+T0=$SECONDS
 python3 -c "
-import boto3, json, os, glob, hashlib, time
+import boto3, json, os, glob, time
 from pathlib import Path
 
 s3 = boto3.client('s3',
@@ -123,6 +122,7 @@ exit_code = $EXIT_CODE
 
 uploaded = {}
 total_bytes = 0
+t0 = time.time()
 for p in pattern.split(','):
     for fp in glob.glob(p, recursive=True):
         path = Path(fp)
@@ -132,17 +132,18 @@ for p in pattern.split(','):
             size = path.stat().st_size
             uploaded[key] = {'size': size}
             total_bytes += size
-            print(f'  Uploaded: {path.name} ({size:,} bytes)')
+            print(f'  {path.name} ({size:,} bytes)')
 
-# Upload final log
 if Path('/workspace/stdout.log').exists():
     s3.upload_file('/workspace/stdout.log', bucket, 'logs/stdout.log')
 
-# Signal done
+elapsed = time.time() - t0
+speed = total_bytes / elapsed / 1024 / 1024 if elapsed > 0 else 0
 s3.put_object(Bucket=bucket, Key='done.json', Body=json.dumps({
     'status': 'success' if exit_code == 0 else 'failed',
     'exit_code': exit_code, 'files': uploaded,
     'total_bytes': total_bytes, 'timestamp': time.time()
 }))
-print(f'[GPU2Vast] Done: exit_code={exit_code}, {len(uploaded)} files ({total_bytes:,} bytes)')
+print(f'[GPU2Vast] Uploaded {len(uploaded)} files ({total_bytes:,} bytes) in {elapsed:.1f}s ({speed:.1f} MB/s)')
 "
+ts "ALL DONE (total ${SECONDS}s)"

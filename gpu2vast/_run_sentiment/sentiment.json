@@ -1,0 +1,14 @@
+[
+  {"text": "This movie was absolutely fantastic!", "label": 2},
+  {"text": "Terrible experience, would not recommend", "label": 0},
+  {"text": "It was okay, nothing special", "label": 1},
+  {"text": "Best product I have ever purchased", "label": 2},
+  {"text": "Waste of money and time", "label": 0},
+  {"text": "Pretty average, met expectations", "label": 1},
+  {"text": "Outstanding quality and fast delivery", "label": 2},
+  {"text": "Broke after one day, very disappointed", "label": 0},
+  {"text": "Does the job, nothing more", "label": 1},
+  {"text": "Exceeded all my expectations, love it", "label": 2},
+  {"text": "Awful customer service experience", "label": 0},
+  {"text": "Decent value for the price point", "label": 1}
+]
