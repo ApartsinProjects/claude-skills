@@ -121,6 +121,17 @@ python gpu_runner.py run \
   --max-price 0.50
 ```
 
+GPU name aliases (use any of these with `--gpu`):
+- `H100`, `H100_SXM` -> `H100 SXM`
+- `A100`, `A100_PCIE` -> `A100 PCIE`
+- `A100_SXM` -> `A100 SXM`
+- `RTX_4090` -> `RTX 4090`
+- `RTX_3090` -> `RTX 3090`
+- `RTX_A6000` -> `RTX A6000`
+- `L40S`, `L40` -> as-is
+
+Filtering: offers require `inet_down >= 100 Mbps` and `reliability >= 0.90`.
+
 Key flags:
 - Always use `python3 -u` (unbuffered output)
 - `--keep-alive`: keep instance after job (for sequential experiments)

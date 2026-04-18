@@ -39,15 +39,33 @@ def _get_api_key():
     return os.environ.get("VASTAI_API_KEY", "")
 
 
+GPU_NAME_ALIASES = {
+    "H100": "H100 SXM",
+    "H100_SXM": "H100 SXM",
+    "H100_PCIE": "H100 PCIE",
+    "A100": "A100 PCIE",
+    "A100_SXM": "A100 SXM",
+    "A100_PCIE": "A100 PCIE",
+    "A100_80GB": "A100 PCIE",
+    "RTX_4090": "RTX 4090",
+    "RTX_3090": "RTX 3090",
+    "RTX_A6000": "RTX A6000",
+    "RTX_A5000": "RTX A5000",
+    "L40S": "L40S",
+    "L40": "L40",
+}
+
+
 def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
                disk_gb: int = 30, num_gpus: int = 1,
                offer_type: str = "on-demand") -> list[dict]:
-    """Search for available GPU offers. Accepts both 'RTX_4090' and 'RTX 4090' formats.
+    """Search for available GPU offers.
 
+    Accepts underscore or space formats (RTX_4090, H100_SXM, A100, etc.).
     offer_type: "on-demand" (default) or "bid" (spot/interruptible, 50-70% cheaper)
     """
     from vastai.api import offers as offers_api
-    api_gpu_name = gpu_name.replace("_", " ")
+    api_gpu_name = GPU_NAME_ALIASES.get(gpu_name, gpu_name.replace("_", " "))
     type_label = "spot" if offer_type == "bid" else "on-demand"
     print(f"  [vast] Querying {type_label} offers: {api_gpu_name} x{num_gpus}, <=${max_price}/hr, {disk_gb}GB disk...")
     client = _get_client()
@@ -56,8 +74,8 @@ def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
         "num_gpus": {"eq": num_gpus},
         "disk_space": {"gte": disk_gb},
         "dph_total": {"lte": max_price},
-        "inet_down": {"gte": 200},
-        "reliability2": {"gte": 0.95},
+        "inet_down": {"gte": 100},
+        "reliability2": {"gte": 0.90},
     }
     try:
         results = offers_api.search_offers(client, query=query, storage=float(disk_gb),
