@@ -430,7 +430,7 @@ start = time.time()
 seen_lines = set()
 last_ssh = 0
 last_r2 = 0
-max_wait = 600
+max_wait = 900
 done = None
 
 while time.time() - start < max_wait:
