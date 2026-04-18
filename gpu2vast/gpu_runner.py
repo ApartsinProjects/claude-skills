@@ -190,6 +190,20 @@ def run_experiment(args):
         if hf_token:
             print(f"  HuggingFace token: loaded (for gated models)")
 
+        # Build bootstrap command: download onstart.sh from R2, then run it
+        r2_endpoint = f"https://{config['r2']['account_id']}.r2.cloudflarestorage.com"
+        onstart_cmd = (
+            f"pip install -q boto3 2>/dev/null; "
+            f"python3 -c \""
+            f"import boto3; "
+            f"s3=boto3.client('s3',endpoint_url='{r2_endpoint}',"
+            f"aws_access_key_id='{config['r2']['access_key']}',"
+            f"aws_secret_access_key='{config['r2']['secret_key']}',"
+            f"region_name='auto'); "
+            f"s3.download_file('{bucket}','onstart.sh','/tmp/onstart.sh')\"; "
+            f"bash /tmp/onstart.sh"
+        )
+
         # Launch with retry (some hosts have broken GPU/Docker setups)
         max_retries = 3
         for attempt in range(max_retries):
@@ -201,6 +215,7 @@ def run_experiment(args):
                     offer_id=cur_offer["id"],
                     docker_image=docker_image,
                     env_vars=env_vars,
+                    onstart_cmd=onstart_cmd,
                     disk_gb=args.disk,
                 )
                 instance_id = instance.get("new_contract") or instance.get("instance_id")
