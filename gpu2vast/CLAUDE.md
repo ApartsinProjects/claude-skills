@@ -11,6 +11,12 @@ The progress_reporter parses these patterns from stdout.
 
 ```python
 import sys
+import torch
+
+# MANDATORY: GPU check at the very top, before any model loading
+assert torch.cuda.is_available(), "CUDA not available. This script requires a GPU."
+device = torch.device("cuda")
+print(f"[train] GPU: {torch.cuda.get_device_name(0)}"); sys.stdout.flush()
 
 print("[train] Loading model from HuggingFace..."); sys.stdout.flush()
 print(f"[train] Model loaded: {model_name} ({params:,} params) on {device}"); sys.stdout.flush()
@@ -30,6 +36,7 @@ print("[train] === DONE ==="); sys.stdout.flush()
 ```
 
 Rules:
+- **MANDATORY**: `assert torch.cuda.is_available()` at the top of every script, before any model loading. Print GPU name with `torch.cuda.get_device_name(0)`. Never fall back to CPU silently.
 - `[train]` prefix on phase markers (model loading, data loading, training, eval, saving)
 - `step/total loss=X.XXXX` format for training progress
 - `epoch=N` in step lines for epoch tracking

@@ -15,15 +15,18 @@ from transformers import (
 )
 from torch.utils.data import DataLoader
 
+assert torch.cuda.is_available(), "CUDA not available. This script requires a GPU."
+device = torch.device("cuda")
+print(f"[train] GPU: {torch.cuda.get_device_name(0)}"); sys.stdout.flush()
+
 writer = SummaryWriter(log_dir="runs")
 t0 = time.time()
 
 writer.add_text("phase", "model_download: loading distilbert-base-uncased", 0)
+writer.flush()
 print("[train] Loading DistilBERT tokenizer and model..."); sys.stdout.flush()
 tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
 model = DistilBertForMaskedLM.from_pretrained("distilbert-base-uncased")
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 writer.add_text("phase", f"model_loaded: distilbert-base-uncased on {device}", 0)
 print(f"[train] Model on {device}"); sys.stdout.flush()
