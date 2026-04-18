@@ -174,6 +174,20 @@ def run_experiment(args):
         job_info["status"] = "running"
         job_path.write_text(json.dumps(job_info, indent=2))
 
+        # 6. Open TensorBoard access
+        tb_tunnel = None
+        conn = vast.get_connection_info(instance_id)
+        tb_port = conn.get("port_mappings", {}).get("6006/tcp", {}).get("host_port")
+        if tb_port and conn.get("public_ip"):
+            print(f"  TensorBoard (direct): http://{conn['public_ip']}:{tb_port}")
+        else:
+            try:
+                tb_tunnel = vast.open_tunnel(instance_id, remote_port=6006, local_port=6006)
+                print("  TensorBoard (tunnel): http://localhost:6006")
+            except Exception:
+                print("  TensorBoard: use 'ssh -p {ssh_port} root@{ssh_host} -L 6006:localhost:6006'"
+                      .format(**conn) if conn.get("ssh_host") else "  TensorBoard: not available")
+
         # 6. Monitor via R2 + stream vast.ai logs
         print("[6/7] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
         monitor_job(r2, bucket, job_id, instance_id, args.max_hours)
@@ -197,6 +211,8 @@ def run_experiment(args):
         print(f"  Recover: python gpu_runner.py recover --job-id {job_id}")
         job_info["status"] = "detached"
         job_path.write_text(json.dumps(job_info, indent=2))
+        if tb_tunnel:
+            tb_tunnel.kill()
         return
 
     except Exception as e:
@@ -206,6 +222,8 @@ def run_experiment(args):
         job_path.write_text(json.dumps(job_info, indent=2))
 
     finally:
+        if tb_tunnel:
+            tb_tunnel.kill()
         _cleanup(vast, r2, instance_id, bucket, job_info, job_path)
 
 

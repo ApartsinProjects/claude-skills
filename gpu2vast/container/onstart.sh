@@ -138,7 +138,15 @@ while True:
 " &
 REPORTER_PID=$!
 
-# 6. Run experiment
+# 6. Start TensorBoard in background (port 6006)
+echo "[GPU2Vast] Starting TensorBoard on port 6006..."
+pip install -q tensorboard 2>/dev/null
+mkdir -p /workspace/data/runs
+tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 2>/dev/null &
+TB_PID=$!
+echo "[GPU2Vast] TensorBoard running (PID=$TB_PID, port=6006)"
+
+# 7. Run experiment
 echo "[GPU2Vast] Running: $EXPERIMENT_CMD"
 cd /workspace/data
 eval "$EXPERIMENT_CMD" 2>&1 | tee /workspace/stdout.log

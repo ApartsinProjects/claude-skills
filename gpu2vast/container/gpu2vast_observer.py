@@ -62,6 +62,14 @@ class GPU2VastObserver:
         except Exception:
             pass
 
+        # TensorBoard writer (auto-creates runs/ directory)
+        self._tb_writer = None
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+            self._tb_writer = SummaryWriter(log_dir="runs")
+        except ImportError:
+            pass
+
         # Start background reporter thread
         if self._s3 and self._bucket:
             self._reporter = threading.Thread(target=self._report_loop, daemon=True)
@@ -78,7 +86,7 @@ class GPU2VastObserver:
         print(msg, flush=True)
 
     def step(self, current: int, total: int, **metrics):
-        """Report training step progress with optional metrics."""
+        """Report training step progress with optional metrics. Also logs to TensorBoard."""
         with self._lock:
             self._metrics["step"] = str(current)
             self._metrics["total"] = str(total)
@@ -86,6 +94,13 @@ class GPU2VastObserver:
             for k, v in metrics.items():
                 if v is not None:
                     self._metrics[k] = f"{v:.4f}" if isinstance(v, float) else str(v)
+
+        # Log to TensorBoard
+        if self._tb_writer:
+            for k, v in metrics.items():
+                if isinstance(v, (int, float)):
+                    self._tb_writer.add_scalar(k, v, current)
+            self._tb_writer.flush()
 
         # Print compact progress line
         parts = [f"{current}/{total}"]
