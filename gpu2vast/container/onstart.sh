@@ -9,15 +9,18 @@ ts "Starting job: $JOB_ID"
 ts "Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 || echo unknown)"
 ts "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'detecting...')"
 
-# 1. Install packages
+# 1. Install packages (skip torch if already present to avoid re-downloading CUDA libs)
 ts "Installing packages..."
 T0=$SECONDS
+EXTRA_PKGS="boto3 transformers accelerate peft trl bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf"
+if ! python3 -c "import torch" 2>/dev/null; then
+    EXTRA_PKGS="torch $EXTRA_PKGS"
+    ts "torch not found in base image, will install"
+fi
 if command -v uv &> /dev/null; then
-    uv pip install --system boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf
+    uv pip install --system $EXTRA_PKGS
 else
-    pip install boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf
+    pip install $EXTRA_PKGS
 fi
 ts "Packages installed ($((SECONDS - T0))s)"
 
