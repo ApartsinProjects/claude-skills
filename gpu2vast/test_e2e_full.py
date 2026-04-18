@@ -311,17 +311,14 @@ echo '[GPU2Vast] ALL DONE'
 """
 
 # Local validation: check bash syntax + embedded Python syntax
-import tempfile, subprocess as _sp
-with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
-    f.write(onstart_script)
-    tmp_sh = f.name
+import subprocess as _sp, re as _re
+tmp_sh = "/tmp/_gpu2vast_onstart_check.sh"
+Path(tmp_sh).write_text(onstart_script)
 r = _sp.run(["bash", "-n", tmp_sh], capture_output=True, text=True)
 if r.returncode != 0:
-    print(f"  FAIL: bash syntax error in onstart.sh: {r.stderr}")
+    print(f"  FAIL: bash syntax error in onstart.sh:\n{r.stderr}")
     sys.exit(1)
 
-# Extract embedded python3 -c blocks and compile-check them
-import re as _re
 for i, m in enumerate(_re.finditer(r'python3 -c "(.*?)"', onstart_script, _re.DOTALL)):
     py_code = m.group(1)
     try:
@@ -330,7 +327,10 @@ for i, m in enumerate(_re.finditer(r'python3 -c "(.*?)"', onstart_script, _re.DO
         print(f"  FAIL: Python syntax error in onstart block {i}: {e}")
         sys.exit(1)
 print("  Local validation: bash + Python syntax OK")
-os.unlink(tmp_sh)
+try:
+    os.unlink(tmp_sh)
+except OSError:
+    pass
 
 # Upload the onstart script to R2 so the instance can fetch it
 r2.s3.put_object(Bucket=bucket, Key="onstart.sh", Body=onstart_script.encode())
