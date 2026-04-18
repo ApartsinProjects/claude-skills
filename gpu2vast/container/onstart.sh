@@ -10,10 +10,12 @@ echo "[GPU2Vast] Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | c
 echo "[GPU2Vast] Installing packages..."
 if command -v uv &> /dev/null; then
     uv pip install --system boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard 2>&1 | tail -3
+        bitsandbytes sentence-transformers datasets requests tensorboard 2>&1 \
+        | grep -E "Installing|Downloading|already satisfied|Successfully" || true
 else
     pip install --no-cache-dir boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard 2>&1 | tail -3
+        bitsandbytes sentence-transformers datasets requests tensorboard 2>&1 \
+        | grep -E "Installing|Downloading|already satisfied|Successfully" || true
 fi
 echo "[GPU2Vast] Packages installed"
 

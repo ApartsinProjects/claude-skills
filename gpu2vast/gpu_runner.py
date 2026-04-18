@@ -247,14 +247,19 @@ def run_experiment(args):
         job_info["status"] = "running"
         job_path.write_text(json.dumps(job_info, indent=2))
 
-        # 6. Open TensorBoard in browser
-        tb_tunnel = None
-        tb_url = _setup_tensorboard(vast, instance_id)
-        if tb_url:
-            job_info["tensorboard_url"] = tb_url
-            job_path.write_text(json.dumps(job_info, indent=2))
+        # 6. Start TensorBoard check in background (non-blocking)
+        import threading
+        tb_result = {"url": ""}
+        def _tb_bg():
+            url = _setup_tensorboard(vast, instance_id, timeout=180)
+            tb_result["url"] = url
+            if url:
+                job_info["tensorboard_url"] = url
+                job_path.write_text(json.dumps(job_info, indent=2))
+        tb_thread = threading.Thread(target=_tb_bg, daemon=True)
+        tb_thread.start()
 
-        # 6. Monitor via R2 + stream vast.ai logs
+        # 6. Monitor via R2 + stream vast.ai logs (starts immediately)
         print("[6/7] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
         monitor_job(r2, bucket, job_id, instance_id, args.max_hours)
 
@@ -303,7 +308,7 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
     import subprocess as sp
     import webbrowser
 
-    print("  Waiting for TensorBoard to become available...")
+    print("  TensorBoard: checking in background...")
 
     conn = vast.get_connection_info(instance_id)
     ssh_host = conn.get("ssh_host", "")
@@ -333,11 +338,8 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
                 if code == "200":
                     tb_ready = True
                     break
-                print(f"\r  TensorBoard: waiting ({elapsed}s, http={code})    ", end="", flush=True)
             except Exception:
-                print(f"\r  TensorBoard: waiting ({elapsed}s)    ", end="", flush=True)
-        else:
-            print(f"\r  TensorBoard: waiting for SSH ({elapsed}s)    ", end="", flush=True)
+                pass
         time.sleep(5)
 
     if not tb_ready:
