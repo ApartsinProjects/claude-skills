@@ -25,7 +25,9 @@ class R2Manager:
     def create_bucket(self, job_id: str) -> str:
         """Create ephemeral bucket for a job."""
         bucket = f"gpu2vast-{job_id}"
+        print(f"  [r2] Creating bucket: {bucket}")
         self.s3.create_bucket(Bucket=bucket)
+        print(f"  [r2] Bucket created")
         return bucket
 
     def upload_files(self, bucket: str, files: list[str], prefix: str = "data/"):
@@ -51,13 +53,16 @@ class R2Manager:
 
     def upload_config(self, bucket: str, config: dict):
         """Upload job configuration."""
+        print(f"  [r2] Uploading job config to {bucket}")
         self.s3.put_object(
             Bucket=bucket, Key="job_config.json",
             Body=json.dumps(config, indent=2),
         )
+        print(f"  [r2] Config uploaded")
 
     def download_results(self, bucket: str, local_dir: str, prefix: str = "results/"):
         """Download all results from R2 to local directory."""
+        print(f"  [r2] Downloading results from {bucket}/{prefix} to {local_dir}")
         Path(local_dir).mkdir(parents=True, exist_ok=True)
         downloaded = []
 
@@ -71,8 +76,10 @@ class R2Manager:
                 local_path = Path(local_dir) / filename
                 local_path.parent.mkdir(parents=True, exist_ok=True)
                 self.s3.download_file(bucket, key, str(local_path))
+                print(f"  [r2] Downloaded: {filename} ({obj['Size']:,} bytes)")
                 downloaded.append(str(local_path))
 
+        print(f"  [r2] Downloaded {len(downloaded)} result files")
         return downloaded
 
     def get_progress(self, bucket: str) -> dict | None:
@@ -101,15 +108,19 @@ class R2Manager:
 
     def delete_bucket(self, bucket: str):
         """Delete all objects and the bucket itself."""
+        print(f"  [r2] Deleting bucket: {bucket}")
         try:
             paginator = self.s3.get_paginator("list_objects_v2")
+            obj_count = 0
             for page in paginator.paginate(Bucket=bucket):
                 objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
                 if objects:
+                    obj_count += len(objects)
                     self.s3.delete_objects(Bucket=bucket, Delete={"Objects": objects})
             self.s3.delete_bucket(Bucket=bucket)
+            print(f"  [r2] Deleted bucket {bucket} ({obj_count} objects removed)")
         except Exception as e:
-            print(f"  Warning: bucket cleanup error: {e}")
+            print(f"  [r2] Warning: bucket cleanup error: {e}")
 
     def list_buckets(self) -> list[str]:
         """List all gpu2vast buckets."""

@@ -58,6 +58,9 @@ def run_experiment(args):
 
     config = load_config()
     job_id = generate_job_id(args.name or "job")
+    instance_id = None
+    bucket = None
+    r2 = None
 
     print(f"\n{'='*60}")
     print(f"  GPU2Vast: {job_id}")
@@ -65,7 +68,6 @@ def run_experiment(args):
     print(f"  GPU: {args.gpu}, Max: ${args.max_price}/hr")
     print(f"{'='*60}\n")
 
-    # Save job info
     job_info = {
         "job_id": job_id,
         "script": args.script,
@@ -79,42 +81,45 @@ def run_experiment(args):
     job_path = JOBS_DIR / f"{job_id}.json"
     job_path.write_text(json.dumps(job_info, indent=2))
 
+    # Validate config
+    if "r2" not in config or not config["r2"].get("account_id"):
+        print("  ERROR: R2 credentials missing. Check keys/r2.key")
+        job_info["status"] = "failed"
+        job_info["error"] = "R2 credentials missing"
+        job_path.write_text(json.dumps(job_info, indent=2))
+        return
+
     try:
         # 1. Create R2 bucket
-        print("[1/6] Creating R2 bucket...")
+        print("[1/7] Creating R2 bucket...")
         r2 = R2Manager(config["r2"])
         bucket = r2.create_bucket(job_id)
         job_info["r2_bucket"] = bucket
-        print(f"  Bucket: {bucket}")
 
         # 2. Upload data + onstart script
-        print("[2/6] Uploading data...")
+        print("[2/7] Uploading data...")
         r2.upload_files(bucket, args.data)
-
-        # Upload the onstart script
         onstart_path = SKILL_DIR / "container" / "onstart.sh"
         r2.upload_files(bucket, [str(onstart_path)], prefix="")
-
         r2.upload_config(bucket, {
             "experiment_cmd": args.script,
             "results_pattern": args.results_pattern,
             "job_id": job_id,
         })
+        print("  Upload complete")
 
         # 3. Find GPU
-        print(f"[3/6] Searching for {args.gpu} <= ${args.max_price}/hr...")
+        print(f"[3/7] Searching for {args.gpu} <= ${args.max_price}/hr...")
         offers = vast.search_gpu(
             gpu_name=args.gpu, max_price=args.max_price, disk_gb=args.disk,
         )
         if not offers:
-            print("  No matching GPU found!")
-            raise RuntimeError("No GPU available")
+            raise RuntimeError(f"No {args.gpu} available at <=${args.max_price}/hr")
         offer = offers[0]
-        print(f"  Found: {offer.get('gpu_name')} @ ${offer.get('dph_total', '?')}/hr (id={offer['id']})")
+        print(f"  Selected: {offer.get('gpu_name')} @ ${offer.get('dph_total', '?')}/hr (offer={offer['id']})")
 
         # 4. Launch instance
-        print("[4/6] Launching instance...")
-        # Load HF token if available
+        print("[4/7] Launching instance...")
         hf_token = ""
         hf_key_file = KEYS_DIR / "huggingface.key"
         if hf_key_file.exists():
@@ -139,26 +144,25 @@ def run_experiment(args):
         )
         instance_id = instance.get("new_contract") or instance.get("instance_id")
         job_info["instance_id"] = instance_id
+        job_info["status"] = "booting"
+        job_path.write_text(json.dumps(job_info, indent=2))
+
+        # 5. Wait for instance to boot
+        print("[5/7] Waiting for instance to boot...")
+        if not vast.wait_for_running(instance_id, timeout=300):
+            raise RuntimeError(f"Instance {instance_id} failed to boot within 300s")
+        print(f"  Instance {instance_id} is running")
         job_info["status"] = "running"
         job_path.write_text(json.dumps(job_info, indent=2))
-        print(f"  Instance: {instance_id}")
 
-        # 5. Monitor via R2
-        print("[5/6] Monitoring (Ctrl+C to detach, use --recover to reconnect)...")
-        monitor_job(r2, bucket, job_id, args.max_hours)
+        # 6. Monitor via R2 + stream vast.ai logs
+        print("[6/7] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
+        monitor_job(r2, bucket, job_id, instance_id, args.max_hours)
 
-        # 6. Download results
-        print("[6/6] Downloading results...")
+        # 7. Download results
+        print("[7/7] Downloading results...")
         downloaded = r2.download_results(bucket, args.local_results)
         print(f"  Downloaded {len(downloaded)} files to {args.local_results}")
-
-        # Cleanup
-        print("\nCleaning up...")
-        if instance_id:
-            vast.destroy_instance(instance_id)
-            print(f"  Destroyed instance {instance_id}")
-        r2.delete_bucket(bucket)
-        print(f"  Deleted R2 bucket {bucket}")
 
         job_info["status"] = "completed"
         job_info["completed_at"] = datetime.now().isoformat()
@@ -174,27 +178,45 @@ def run_experiment(args):
         print(f"  Recover: python gpu_runner.py recover --job-id {job_id}")
         job_info["status"] = "detached"
         job_path.write_text(json.dumps(job_info, indent=2))
+        return
 
     except Exception as e:
-        print(f"\n  Error: {e}")
+        print(f"\n  ERROR: {e}")
         job_info["status"] = "failed"
         job_info["error"] = str(e)
         job_path.write_text(json.dumps(job_info, indent=2))
-        # Attempt cleanup
+
+    finally:
+        _cleanup(vast, r2, instance_id, bucket, job_info, job_path)
+
+
+def _cleanup(vast, r2, instance_id, bucket, job_info, job_path):
+    """Always destroy instance and delete bucket, regardless of outcome."""
+    if job_info.get("status") == "detached":
+        return
+    print("\n  Cleaning up...")
+    if instance_id:
         try:
-            if job_info.get("instance_id"):
-                vast.destroy_instance(job_info["instance_id"])
-            if job_info.get("r2_bucket"):
-                r2.delete_bucket(job_info["r2_bucket"])
-        except:
-            pass
+            vast.destroy_instance(instance_id)
+        except Exception as e:
+            print(f"  [cleanup] Instance destroy failed: {e}")
+    if bucket and r2:
+        try:
+            r2.delete_bucket(bucket)
+        except Exception as e:
+            print(f"  [cleanup] Bucket delete failed: {e}")
+    print("  Cleanup complete")
 
 
-def monitor_job(r2, bucket, job_id, max_hours):
-    """Poll R2 for progress until done or timeout."""
+def monitor_job(r2, bucket, job_id, instance_id, max_hours):
+    """Poll R2 for progress and stream vast.ai instance logs."""
+    import vastai_manager as vast
+
     start = time.time()
     max_seconds = max_hours * 3600
     stale_count = 0
+    seen_log_lines = set()
+    last_log_fetch = 0
 
     while True:
         elapsed = time.time() - start
@@ -206,16 +228,25 @@ def monitor_job(r2, bucket, job_id, max_hours):
         done = r2.get_done(bucket)
         if done:
             status = done.get("status", "unknown")
-            print(f"\n  Job finished: {status}")
+            exit_code = done.get("exit_code", "?")
+            print(f"\n  Job finished: {status} (exit_code={exit_code})")
+            if status != "success":
+                _print_final_logs(vast, instance_id, seen_log_lines)
             return
 
         # Check error
         error = r2.get_error(bucket)
         if error:
             print(f"\n  Job error: {error}")
+            _print_final_logs(vast, instance_id, seen_log_lines)
             return
 
-        # Check progress
+        # Stream instance logs every 10s
+        if instance_id and time.time() - last_log_fetch >= 10:
+            _stream_logs(vast, instance_id, seen_log_lines, int(elapsed))
+            last_log_fetch = time.time()
+
+        # Check progress from R2
         progress = r2.get_progress(bucket)
         if progress:
             step = progress.get("step", "?")
@@ -232,10 +263,42 @@ def monitor_job(r2, bucket, job_id, max_hours):
             stale_count = 0
         else:
             stale_count += 1
-            if stale_count > 20:
-                print(f"\n  No progress for {stale_count * 30}s, may have failed")
+            stale_secs = stale_count * 10
+            if stale_count == 18:
+                print(f"\n  WARNING: No progress for {stale_secs}s")
+            elif stale_count == 30:
+                print(f"\n  No progress for {stale_secs}s, may have failed")
+                _print_final_logs(vast, instance_id, seen_log_lines)
 
-        time.sleep(30)
+        time.sleep(10)
+
+
+def _stream_logs(vast, instance_id, seen_lines, elapsed_s):
+    """Fetch and print new log lines from the vast.ai instance."""
+    log_output = vast.get_logs(instance_id, tail=50)
+    if not log_output:
+        return
+    for line in log_output.split("\n"):
+        line = line.strip()
+        if line and line not in seen_lines:
+            seen_lines.add(line)
+            print(f"  [{elapsed_s:3d}s] {line}")
+
+
+def _print_final_logs(vast, instance_id, seen_lines):
+    """Fetch last 100 lines for post-mortem."""
+    if not instance_id:
+        return
+    print("  Fetching final logs...")
+    log_output = vast.get_logs(instance_id, tail=100)
+    if not log_output:
+        print("  (no logs available)")
+        return
+    for line in log_output.split("\n"):
+        line = line.strip()
+        if line and line not in seen_lines:
+            seen_lines.add(line)
+            print(f"  [log] {line}")
 
 
 def show_status(args):
@@ -272,8 +335,9 @@ def recover_job(args):
         return
 
     # Resume monitoring
-    print(f"Reconnecting to {args.job_id}...")
-    monitor_job(r2, bucket, args.job_id, 2)
+    instance_id = info.get("instance_id")
+    print(f"Reconnecting to {args.job_id} (instance={instance_id})...")
+    monitor_job(r2, bucket, args.job_id, instance_id, 2)
 
 
 def cleanup_job(args):

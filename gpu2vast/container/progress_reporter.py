@@ -1,5 +1,5 @@
 """Background progress reporter. Reads stdout.log, extracts progress, uploads to R2."""
-import boto3, json, os, re, time, subprocess
+import boto3, json, os, re, sys, time, subprocess
 from pathlib import Path
 
 s3 = boto3.client("s3",
@@ -61,6 +61,6 @@ while True:
             Body=json.dumps(progress),
         )
     except Exception as e:
-        pass
+        print(f"[progress] error: {e}", file=sys.stderr)
 
     time.sleep(interval)

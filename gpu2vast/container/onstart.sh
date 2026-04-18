@@ -1,7 +1,7 @@
 #!/bin/bash
 # GPU2Vast On-Start Script for vast.ai instances
 # Runs automatically when instance boots. Uses vast.ai pre-cached base image.
-set -e
+set -eo pipefail
 
 echo "[GPU2Vast] Starting job: $JOB_ID"
 
@@ -80,6 +80,12 @@ while True:
             progress['gpu_mem'] = int(parts[1])
         except: pass
         s3.put_object(Bucket=bucket, Key='progress.json', Body=json.dumps(progress))
+        # Upload log file every 60s (tail last 50KB for cost efficiency)
+        if log.exists() and int(time.time()) % 60 < 31:
+            content = log.read_bytes()
+            if len(content) > 50000:
+                content = b'[...truncated...]\n' + content[-50000:]
+            s3.put_object(Bucket=bucket, Key='logs/stdout.log', Body=content)
     except: pass
     time.sleep(30)
 " &

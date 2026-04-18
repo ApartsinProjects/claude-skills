@@ -2,7 +2,7 @@
 # GPU2Vast Container Entrypoint
 # Downloads data from R2, runs experiment, uploads results, signals done
 
-set -e
+set -eo pipefail
 
 echo "[GPU2Vast] Starting job: $JOB_ID"
 echo "[GPU2Vast] Bucket: $R2_BUCKET"
