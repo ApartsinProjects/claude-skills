@@ -50,12 +50,30 @@ class R2Manager:
                 self.s3.upload_file(str(path), bucket, key)
                 return key, {"size": path.stat().st_size, "md5": md5}
 
+            failed_uploads = []
             with ThreadPoolExecutor(max_workers=min(8, len(valid_files))) as pool:
                 futures = {pool.submit(_upload_one, p): p for p in valid_files}
                 for future in as_completed(futures):
-                    key, info = future.result()
-                    manifest[key] = info
-                    print(f"  Uploaded: {Path(key).name} ({info['size']:,} bytes)")
+                    path = futures[future]
+                    try:
+                        key, info = future.result()
+                        manifest[key] = info
+                        print(f"  Uploaded: {Path(key).name} ({info['size']:,} bytes)")
+                    except Exception as e:
+                        failed_uploads.append((path, e))
+                        print(f"  FAILED: {path.name}: {e}")
+
+            if failed_uploads:
+                print(f"  Retrying {len(failed_uploads)} failed uploads...")
+                for path, _ in failed_uploads:
+                    try:
+                        key = prefix + path.name
+                        md5 = hashlib.md5(path.read_bytes()).hexdigest()
+                        self.s3.upload_file(str(path), bucket, key)
+                        manifest[key] = {"size": path.stat().st_size, "md5": md5}
+                        print(f"  Uploaded (retry): {path.name}")
+                    except Exception as e2:
+                        raise RuntimeError(f"Upload failed after retry: {path.name}: {e2}")
         else:
             for path in valid_files:
                 key = prefix + path.name
@@ -107,12 +125,27 @@ class R2Manager:
                 self.s3.download_file(bucket, key, local_path)
                 return local_path, Path(key).name, size
 
+            failed_downloads = []
             with ThreadPoolExecutor(max_workers=min(8, len(to_download))) as pool:
                 futures = {pool.submit(_download_one, item): item for item in to_download}
                 for future in as_completed(futures):
-                    local_path, name, size = future.result()
-                    print(f"  [r2] Downloaded: {name} ({size:,} bytes)")
+                    item = futures[future]
+                    try:
+                        local_path, name, size = future.result()
+                        print(f"  [r2] Downloaded: {name} ({size:,} bytes)")
+                        downloaded.append(local_path)
+                    except Exception as e:
+                        failed_downloads.append(item)
+                        print(f"  [r2] FAILED: {Path(item[0]).name}: {e}")
+
+            for item in failed_downloads:
+                try:
+                    key, local_path, size = item
+                    self.s3.download_file(bucket, key, local_path)
+                    print(f"  [r2] Downloaded (retry): {Path(key).name}")
                     downloaded.append(local_path)
+                except Exception as e2:
+                    print(f"  [r2] Download failed after retry: {Path(item[0]).name}: {e2}")
         else:
             for key, local_path, size in to_download:
                 self.s3.download_file(bucket, key, local_path)
@@ -147,16 +180,18 @@ class R2Manager:
             return None
 
     def delete_bucket(self, bucket: str):
-        """Delete all objects and the bucket itself."""
+        """Delete all objects and the bucket itself. Handles >1000 objects."""
         print(f"  [r2] Deleting bucket: {bucket}")
         try:
             paginator = self.s3.get_paginator("list_objects_v2")
             obj_count = 0
             for page in paginator.paginate(Bucket=bucket):
-                objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-                if objects:
-                    obj_count += len(objects)
-                    self.s3.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+                all_keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                # delete_objects accepts max 1000 keys per call
+                for i in range(0, len(all_keys), 1000):
+                    batch = all_keys[i:i + 1000]
+                    self.s3.delete_objects(Bucket=bucket, Delete={"Objects": batch})
+                    obj_count += len(batch)
             self.s3.delete_bucket(Bucket=bucket)
             print(f"  [r2] Deleted bucket {bucket} ({obj_count} objects removed)")
         except Exception as e:

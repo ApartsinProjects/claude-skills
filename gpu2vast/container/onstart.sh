@@ -96,8 +96,8 @@ echo "[GPU2Vast] TensorBoard running (PID=$TB_PID, port=6006)"
 # 7. Run experiment
 echo "[GPU2Vast] Running: $EXPERIMENT_CMD"
 cd /workspace/data
-eval "$EXPERIMENT_CMD" 2>&1 | tee /workspace/stdout.log
-EXIT_CODE=${PIPESTATUS[0]}
+eval "$EXPERIMENT_CMD" > >(tee /workspace/stdout.log) 2>&1
+EXIT_CODE=$?
 
 # 8. Stop reporter
 if [ -n "$REPORTER_PID" ]; then

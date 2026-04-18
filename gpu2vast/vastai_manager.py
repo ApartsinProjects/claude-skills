@@ -79,19 +79,39 @@ def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
     return []
 
 
-def estimate_cost(offer: dict, estimated_minutes: float) -> dict:
-    """Estimate total job cost for a given offer and runtime."""
+def estimate_cost(offer: dict, estimated_minutes: float, data_gb: float = 0.1) -> dict:
+    """Estimate total job cost and ETA including all phases."""
     price_per_hour = offer.get("dph_total", 0)
-    hours = estimated_minutes / 60
-    compute_cost = price_per_hour * hours
-    storage_cost = 0.0  # R2 free tier
+    inet_down = max(offer.get("inet_down", 100), 1)
+    inet_up = max(offer.get("inet_up", 50), 1)
+
+    # Phase time estimates (minutes)
+    upload_min = data_gb / (inet_up * 60 / 8 / 1024) if inet_up > 0 else 1
+    boot_min = 2.0  # typical instance boot
+    setup_min = 3.0  # pip install, R2 download, HF model download
+    download_min = data_gb / (inet_down * 60 / 8 / 1024) if inet_down > 0 else 1
+    train_min = estimated_minutes
+    result_upload_min = 0.5  # model weights upload on instance
+    cleanup_min = 0.2
+
+    total_min = upload_min + boot_min + setup_min + train_min + result_upload_min + download_min + cleanup_min
+    total_hours = total_min / 60
+    total_cost = price_per_hour * total_hours
+
     return {
-        "compute_cost": round(compute_cost, 4),
-        "storage_cost": storage_cost,
-        "total_cost": round(compute_cost + storage_cost, 4),
+        "total_cost": round(total_cost, 4),
         "price_per_hour": price_per_hour,
-        "estimated_minutes": estimated_minutes,
+        "total_minutes": round(total_min, 1),
         "gpu": offer.get("gpu_name", "?"),
+        "phases": {
+            "r2_upload": round(upload_min, 1),
+            "instance_boot": round(boot_min, 1),
+            "setup_and_download": round(setup_min, 1),
+            "training": round(train_min, 1),
+            "result_upload": round(result_upload_min, 1),
+            "result_download": round(download_min, 1),
+            "cleanup": round(cleanup_min, 1),
+        },
     }
 
 
@@ -171,28 +191,34 @@ def select_image(script_path: str = None, requirements: list[str] = None) -> str
     return best_image
 
 
-def _cost_score(offer: dict) -> float:
-    """Score an offer by cost-effectiveness. Lower is better.
+def _cost_score(offer: dict, data_gb: float = 1.0) -> float:
+    """Score an offer by total effective cost. Lower is better.
 
-    Weighs price heavily but penalizes slow network, low RAM, and low reliability,
-    since those increase total job cost (longer transfers, OOM retries, failures).
+    Models real cost: compute time + data transfer time (both cost $/hr).
+    A slow network on a cheap instance can cost more than a fast network
+    on a slightly pricier one because transfer time is billed compute time.
     """
     price = offer.get("dph_total", 999)
-    inet_down = max(offer.get("inet_down", 1), 1)
+    inet_down = max(offer.get("inet_down", 1), 1)  # Mbps
     inet_up = max(offer.get("inet_up", 1), 1)
-    gpu_ram = max(offer.get("gpu_ram", 1), 1)
     reliability = max(offer.get("reliability2", 0.5), 0.01)
     dlperf = max(offer.get("dlperf", 1), 0.01)
+    gpu_ram = max(offer.get("gpu_ram", 1), 1)
 
-    # Normalize: penalize slow network (data transfer time adds cost)
-    net_penalty = 100.0 / min(inet_down, 1000) + 50.0 / min(inet_up, 500)
-    # Penalize low reliability (higher chance of job failure = wasted money)
-    reliability_penalty = 0.1 / reliability
-    # Bonus for higher GPU RAM and DL performance
-    ram_bonus = -0.001 * min(gpu_ram, 80)
+    # Transfer cost: time to upload/download data * price per hour
+    # Convert Mbps to GB/min: Mbps * 60 / 8 / 1024
+    dl_minutes = data_gb / (inet_down * 60 / 8 / 1024) if inet_down > 0 else 10
+    ul_minutes = data_gb / (inet_up * 60 / 8 / 1024) if inet_up > 0 else 10
+    transfer_cost = (dl_minutes + ul_minutes) / 60 * price
+
+    # Reliability: expected cost multiplier (unreliable = may need to rerun)
+    reliability_multiplier = 1.0 / reliability
+
+    # DL performance bonus (normalized)
     perf_bonus = -0.001 * min(dlperf, 50)
+    ram_bonus = -0.001 * min(gpu_ram, 80)
 
-    return price + net_penalty * 0.01 + reliability_penalty + ram_bonus + perf_bonus
+    return (price + transfer_cost) * reliability_multiplier + perf_bonus + ram_bonus
 
 
 def _search_gpu_cli(gpu_name, max_price, disk_gb, num_gpus):
@@ -275,10 +301,16 @@ def get_logs(instance_id: int, tail: int = 50) -> str:
 
 
 def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
-    """Wait for instance to reach 'running' state. Raises on error states."""
+    """Wait for instance to reach 'running' state. Raises on error states.
+
+    Uses a grace period for transient error states to avoid false failures
+    from status flapping during boot.
+    """
     print(f"  [vast] Waiting for instance {instance_id} to boot (timeout={timeout}s)...")
     start = time.time()
-    error_states = {"exited", "stopped"}
+    terminal_states = {"exited", "stopped"}
+    error_count = 0
+    error_grace = 3  # require 3 consecutive error states before raising
     while time.time() - start < timeout:
         try:
             info = get_instance(instance_id)
@@ -300,18 +332,23 @@ def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
                 print()
                 return True
 
-            if status in error_states:
-                print(f"\n  [vast] Instance entered error state: {status}")
-                if status_msg:
-                    print(f"  [vast] Message: {status_msg}")
-                raise RuntimeError(f"Instance {instance_id} failed: {status}. {status_msg}")
-
-            if status_msg and any(kw in status_msg.lower() for kw in [
+            if status in terminal_states:
+                error_count += 1
+                if error_count >= error_grace:
+                    print(f"\n  [vast] Instance in terminal state: {status} (confirmed {error_count}x)")
+                    if status_msg:
+                        print(f"  [vast] Message: {status_msg}")
+                    raise RuntimeError(f"Instance {instance_id} failed: {status}. {status_msg}")
+            elif status_msg and any(kw in status_msg.lower() for kw in [
                 "error", "invalid", "not started loading", "docker image",
                 "has not started", "failed", "cannot"
             ]):
-                print(f"\n  [vast] Instance error detected: {status_msg}")
-                raise RuntimeError(f"Instance {instance_id} failed: {status_msg}")
+                error_count += 1
+                if error_count >= error_grace:
+                    print(f"\n  [vast] Instance error (confirmed {error_count}x): {status_msg}")
+                    raise RuntimeError(f"Instance {instance_id} failed: {status_msg}")
+            else:
+                error_count = 0
 
         except RuntimeError:
             raise

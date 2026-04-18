@@ -10,13 +10,34 @@ Usage:
 """
 
 import argparse
+import atexit
 import json
 import os
+import signal
 import sys
 import time
 import yaml
 from datetime import datetime
 from pathlib import Path
+
+_child_processes = []
+
+
+def _cleanup_children():
+    """Kill any SSH tunnel or background processes on exit."""
+    for proc in _child_processes:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+atexit.register(_cleanup_children)
+
+def _sigterm_handler(signum, frame):
+    _cleanup_children()
+    sys.exit(1)
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 SKILL_DIR = Path(__file__).parent
 KEYS_DIR = SKILL_DIR / "keys"
@@ -124,10 +145,16 @@ def run_experiment(args):
         offer = offers[0]
         print(f"  Selected: {offer.get('gpu_name')} @ ${offer.get('dph_total', '?')}/hr (offer={offer['id']})")
 
-        # Cost estimation
-        est = vast.estimate_cost(offer, args.max_hours * 60)
-        print(f"  Estimated max cost: ${est['total_cost']:.4f} ({est['estimated_minutes']:.0f} min)")
+        # Cost + ETA estimation
+        data_size_gb = sum(Path(f).stat().st_size for f in args.data if Path(f).exists()) / (1024**3)
+        est = vast.estimate_cost(offer, args.max_hours * 60, data_gb=max(data_size_gb, 0.01))
+        phases = est["phases"]
+        print(f"  ETA: ~{est['total_minutes']:.0f} min total, ~${est['total_cost']:.4f}")
+        print(f"    upload={phases['r2_upload']:.0f}m  boot={phases['instance_boot']:.0f}m  "
+              f"setup={phases['setup_and_download']:.0f}m  train={phases['training']:.0f}m  "
+              f"fetch={phases['result_download']:.0f}m")
         job_info["estimated_cost"] = est["total_cost"]
+        job_info["estimated_minutes"] = est["total_minutes"]
 
         # 4. Launch instance
         print("[4/7] Launching instance...")
@@ -140,10 +167,14 @@ def run_experiment(args):
         docker_image = args.image
         if docker_image == "auto":
             script_files = [f for f in args.data if f.endswith(".py")]
-            docker_image = vast.select_image(
-                script_path=script_files[0] if script_files else None,
-            )
+            script_to_analyze = script_files[0] if script_files else None
+            if script_to_analyze and Path(script_to_analyze).stat().st_size > 10_000_000:
+                print(f"  Script too large for import analysis, using default image")
+                docker_image = "vastai/pytorch"
+            else:
+                docker_image = vast.select_image(script_path=script_to_analyze)
             print(f"  Auto-selected image: {docker_image}")
+        job_info["docker_image"] = docker_image
 
         env_vars = {
             "R2_ACCOUNT_ID": config["r2"]["account_id"],
@@ -280,12 +311,13 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
     elif ssh_host and ssh_port and key_path.exists():
         # Open SSH tunnel in background
         try:
-            sp.Popen(
+            tunnel_proc = sp.Popen(
                 ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
                  "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
                  "-L", "6006:localhost:6006", "-N"],
                 stdout=sp.DEVNULL, stderr=sp.DEVNULL,
             )
+            _child_processes.append(tunnel_proc)
             tb_url = "http://localhost:6006"
             print(f"  TensorBoard (tunnel): {tb_url}")
         except Exception as e:
