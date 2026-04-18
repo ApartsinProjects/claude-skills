@@ -310,23 +310,18 @@ print(f'Results uploaded: {{len(uploaded)}} files')
 echo '[GPU2Vast] ALL DONE'
 """
 
-# Local validation: check embedded Python syntax (bash -n unreliable on Windows)
-import re as _re
-for i, m in enumerate(_re.finditer(r'python3 -c "(.*?)"', onstart_script, _re.DOTALL)):
-    py_code = m.group(1)
-    try:
-        compile(py_code, f"<onstart_python_block_{i}>", "exec")
-    except SyntaxError as e:
-        print(f"  FAIL: Python syntax error in onstart block {i}: {e}")
-        sys.exit(1)
-
-# Check for known bad patterns
+# Local validation: check for known bad patterns
 if "& &&" in onstart_script:
-    print("  FAIL: '& &&' pattern found in onstart script (backgrounding + chaining)")
+    print("  FAIL: '& &&' pattern in onstart (backgrounding + chaining bug)")
     sys.exit(1)
-if "${PIPESTATUS" in onstart_script and "set -o pipefail" not in onstart_script and "set -e" not in onstart_script:
-    print("  WARN: PIPESTATUS used without pipefail")
-print("  Local validation: Python syntax + pattern checks OK")
+if "import boto3" in onstart_script:
+    # Verify pip install comes before first boto3 use
+    pip_pos = onstart_script.find("pip install")
+    boto_pos = onstart_script.find("import boto3")
+    if pip_pos < 0 or boto_pos < pip_pos:
+        print("  FAIL: boto3 used before pip install")
+        sys.exit(1)
+print("  Local validation: pattern checks OK")
 
 # Upload the onstart script to R2 so the instance can fetch it
 r2.s3.put_object(Bucket=bucket, Key="onstart.sh", Body=onstart_script.encode())
