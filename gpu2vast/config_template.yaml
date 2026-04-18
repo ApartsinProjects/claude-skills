@@ -1,0 +1,28 @@
+# GPU2Vast Configuration
+# Copy to ~/.config/gpu2vast/config.yaml and fill in credentials
+
+vastai:
+  api_key: ""              # From https://cloud.vast.ai/account/
+
+r2:
+  account_id: ""           # Cloudflare account ID
+  access_key: ""           # R2 API token access key
+  secret_key: ""           # R2 API token secret key
+
+docker:
+  registry: ""             # Docker Hub username
+  username: ""
+  password: ""
+
+huggingface:
+  token: ""                # For gated models (Llama, etc.)
+
+defaults:
+  gpu: "RTX_4090"
+  max_price_per_hour: 0.50
+  max_runtime_hours: 2
+  disk_gb: 30
+  base_image: "pytorch/pytorch:2.3.0-cuda12.1-cudnn9-runtime"
+  poll_interval_seconds: 30
+  progress_report_interval: 30
+  stale_timeout_minutes: 10
