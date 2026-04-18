@@ -60,7 +60,8 @@ writer.close()
 ## Dependencies
 
 The onstart.sh installs these packages on the instance:
-`boto3 torch transformers accelerate peft trl bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf`
+`boto3 transformers accelerate peft trl bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf`
+Note: `torch` is skipped if already present in the base image (vastai/pytorch has it pre-installed).
 
 If your script needs additional packages, add a `requirements.txt` to `--data` files.
 The smoke test (step 0) checks imports locally before launching.
