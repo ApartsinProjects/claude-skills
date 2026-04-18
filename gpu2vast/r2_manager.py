@@ -31,56 +31,68 @@ class R2Manager:
 
     def upload_files(self, bucket: str, files: list[str], prefix: str = "data/",
                      parallel: bool = True):
-        """Upload local files to R2 bucket. Uses parallel uploads for speed."""
+        """Upload local files to R2 bucket. Uses parallel uploads for speed.
+
+        Files can use rename syntax: 'local_path:remote_name' to upload
+        local_path as remote_name (e.g. 'my_train.py:train.py').
+        """
         manifest = {}
         valid_files = []
         for filepath in files:
-            path = Path(filepath)
-            if not path.exists():
+            if ":" in filepath and not Path(filepath).exists():
+                parts = filepath.rsplit(":", 1)
+                local_path = Path(parts[0])
+                remote_name = parts[1]
+            else:
+                local_path = Path(filepath)
+                remote_name = local_path.name
+            if not local_path.exists():
                 print(f"  SKIP (not found): {filepath}")
                 continue
-            valid_files.append(path)
+            valid_files.append((local_path, remote_name))
 
         if parallel and len(valid_files) > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            def _upload_one(path):
-                key = prefix + path.name
-                md5 = hashlib.md5(path.read_bytes()).hexdigest()
-                self.s3.upload_file(str(path), bucket, key)
-                return key, {"size": path.stat().st_size, "md5": md5}
+            def _upload_one(item):
+                local_path, remote_name = item
+                key = prefix + remote_name
+                md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
+                self.s3.upload_file(str(local_path), bucket, key)
+                return key, {"size": local_path.stat().st_size, "md5": md5}
 
             failed_uploads = []
             with ThreadPoolExecutor(max_workers=min(8, len(valid_files))) as pool:
-                futures = {pool.submit(_upload_one, p): p for p in valid_files}
+                futures = {pool.submit(_upload_one, item): item for item in valid_files}
                 for future in as_completed(futures):
-                    path = futures[future]
+                    item = futures[future]
                     try:
                         key, info = future.result()
                         manifest[key] = info
                         print(f"  Uploaded: {Path(key).name} ({info['size']:,} bytes)")
                     except Exception as e:
-                        failed_uploads.append((path, e))
-                        print(f"  FAILED: {path.name}: {e}")
+                        failed_uploads.append((item, e))
+                        print(f"  FAILED: {item[1]}: {e}")
 
             if failed_uploads:
                 print(f"  Retrying {len(failed_uploads)} failed uploads...")
-                for path, _ in failed_uploads:
+                for item, _ in failed_uploads:
                     try:
-                        key = prefix + path.name
-                        md5 = hashlib.md5(path.read_bytes()).hexdigest()
-                        self.s3.upload_file(str(path), bucket, key)
-                        manifest[key] = {"size": path.stat().st_size, "md5": md5}
-                        print(f"  Uploaded (retry): {path.name}")
+                        local_path, remote_name = item
+                        key = prefix + remote_name
+                        md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
+                        self.s3.upload_file(str(local_path), bucket, key)
+                        manifest[key] = {"size": local_path.stat().st_size, "md5": md5}
+                        print(f"  Uploaded (retry): {remote_name}")
                     except Exception as e2:
-                        raise RuntimeError(f"Upload failed after retry: {path.name}: {e2}")
+                        raise RuntimeError(f"Upload failed after retry: {item[1]}: {e2}")
         else:
-            for path in valid_files:
-                key = prefix + path.name
-                md5 = hashlib.md5(path.read_bytes()).hexdigest()
-                self.s3.upload_file(str(path), bucket, key)
-                manifest[key] = {"size": path.stat().st_size, "md5": md5}
-                print(f"  Uploaded: {path.name} ({path.stat().st_size:,} bytes)")
+            for local_path, remote_name in valid_files:
+                key = prefix + remote_name
+                md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
+                self.s3.upload_file(str(local_path), bucket, key)
+                manifest[key] = {"size": local_path.stat().st_size, "md5": md5}
+                print(f"  Uploaded: {remote_name} ({local_path.stat().st_size:,} bytes)")
 
         self.s3.put_object(
             Bucket=bucket, Key="manifest.json",

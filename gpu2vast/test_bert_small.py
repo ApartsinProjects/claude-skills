@@ -7,6 +7,7 @@ import os
 import json
 import time
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from transformers import (
     DistilBertTokenizer,
     DistilBertForMaskedLM,
@@ -21,6 +22,8 @@ model = DistilBertForMaskedLM.from_pretrained("distilbert-base-uncased")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 print(f"[train] Model on {device}"); sys.stdout.flush()
+
+writer = SummaryWriter(log_dir="runs")
 
 texts = [
     "The cat sat on the mat and watched the birds outside.",
@@ -65,8 +68,10 @@ for epoch in range(1, epochs + 1):
         optimizer.step()
         optimizer.zero_grad()
         epoch_loss += loss.item()
+        writer.add_scalar("train/loss", loss.item(), step)
         print(f"  {step}/{total_steps} loss={loss.item():.4f} epoch={epoch}"); sys.stdout.flush()
     avg_loss = epoch_loss / len(loader)
+    writer.add_scalar("train/epoch_loss", avg_loss, epoch)
     print(f"[train] Epoch {epoch} avg_loss={avg_loss:.4f}"); sys.stdout.flush()
 
 elapsed = time.time() - start_time
@@ -83,6 +88,8 @@ with torch.no_grad():
     avg_eval_loss = total_eval_loss / len(loader)
     perplexity = torch.exp(torch.tensor(avg_eval_loss)).item()
 
+writer.add_scalar("eval/loss", avg_eval_loss, epochs)
+writer.add_scalar("eval/perplexity", perplexity, epochs)
 print(f"[train] Eval: loss={avg_eval_loss:.4f}, perplexity={perplexity:.2f}"); sys.stdout.flush()
 
 # Save results
@@ -103,5 +110,6 @@ with open("results/summary.json", "w") as f:
 
 model.save_pretrained("results/model")
 tokenizer.save_pretrained("results/model")
+writer.close()
 print(f"[train] Saved model to results/model/"); sys.stdout.flush()
 print("[train] === DONE ==="); sys.stdout.flush()

@@ -84,6 +84,13 @@ Key flags:
 - `--skip-smoke`: bypass local import check (not recommended)
 - `--image auto`: always resolves to `vastai/pytorch` (pre-cached, fastest boot)
 
+File rename syntax for `--data`: use `local_path:remote_name` to upload a local file
+under a different name on the instance. Example:
+```bash
+--data my_experiment.py:train.py dataset_v2.json:data.json
+```
+This uploads `my_experiment.py` as `train.py` and `dataset_v2.json` as `data.json`.
+
 ## Pipeline (what happens step by step)
 
 | Step | What | Time | Visible in chat |
@@ -149,6 +156,7 @@ python gpu_runner.py cleanup-all
 
 - Do NOT use `huggingface/transformers-pytorch-gpu` image (15GB, 5+ min pull, causes timeouts)
 - Do NOT use Unicode/emoji in print statements (crashes Windows cp1252 console)
+- Do NOT use Python 3.14's default `text=True` in subprocess without `encoding="utf-8", errors="replace"` (SSH output contains non-ASCII that crashes cp1252)
 - Do NOT use double quotes inside `python3 -c "..."` embedded in bash
 - Do NOT join bash commands with `&&` when backgrounding processes (`& &&` is invalid)
 - Do NOT use `--no-cache-dir` with pip (forces re-downloading 2GB+ of packages)

@@ -219,7 +219,7 @@ def _search_gpu_cli(gpu_name, max_price, disk_gb, num_gpus):
     api_key = _get_api_key()
     query = f"gpu_name={gpu_name} num_gpus={num_gpus} disk_space>={disk_gb} dph<={max_price} inet_down>=200 reliability>0.95"
     cmd = ["vastai", "--api-key", api_key, "search", "offers", "--raw", query]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if result.returncode != 0:
         raise RuntimeError(f"vast.ai search error: {result.stderr}")
     try:
@@ -391,7 +391,7 @@ def ssh_health_check(instance_id: int, timeout: int = 15) -> bool:
             ["ssh", "-o", f"ConnectTimeout={timeout}", "-o", "StrictHostKeyChecking=no",
              "-o", "BatchMode=yes", "-i", str(key_path),
              "-p", str(ssh_port), f"root@{ssh_host}", "echo ok"],
-            capture_output=True, text=True, timeout=timeout + 5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout + 5,
         )
         return result.returncode == 0 and "ok" in result.stdout
     except Exception:

@@ -66,6 +66,13 @@ def load_config() -> dict:
     return config
 
 
+def _resolve_data_path(spec: str) -> Path:
+    """Extract the local path from a data file spec (handles 'local:remote' rename syntax)."""
+    if ":" in spec and not Path(spec).exists():
+        return Path(spec.rsplit(":", 1)[0])
+    return Path(spec)
+
+
 def generate_job_id(experiment_name: str) -> str:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     clean = experiment_name.lower().replace(" ", "-")[:20]
@@ -158,7 +165,7 @@ def run_experiment(args):
         print(f"  Selected: {offer.get('gpu_name')} @ ${offer.get('dph_total', '?')}/hr (offer={offer['id']})")
 
         # Cost + ETA estimation
-        data_size_gb = sum(Path(f).stat().st_size for f in args.data if Path(f).exists()) / (1024**3)
+        data_size_gb = sum(p.stat().st_size for f in args.data for p in [_resolve_data_path(f)] if p.exists()) / (1024**3)
         est = vast.estimate_cost(offer, args.max_hours * 60, data_gb=max(data_size_gb, 0.01))
         phases = est["phases"]
         print(f"  ETA: ~{est['total_minutes']:.0f} min total, ~${est['total_cost']:.4f}")
@@ -178,7 +185,8 @@ def run_experiment(args):
         # Dynamic image selection: analyze script imports if --image=auto
         docker_image = args.image
         if docker_image == "auto":
-            script_files = [f for f in args.data if f.endswith(".py")]
+            script_files = [str(_resolve_data_path(f)) for f in args.data
+                            if _resolve_data_path(f).suffix == ".py"]
             script_to_analyze = script_files[0] if script_files else None
             if script_to_analyze and Path(script_to_analyze).stat().st_size > 10_000_000:
                 print(f"  Script too large for import analysis, using default image")
@@ -319,7 +327,8 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
     """
     import subprocess as sp
 
-    py_files = [f for f in data_files if f.endswith(".py") and Path(f).exists()]
+    py_files = [str(_resolve_data_path(f)) for f in data_files
+                 if _resolve_data_path(f).suffix == ".py" and _resolve_data_path(f).exists()]
     if not py_files:
         print("  No Python files in --data, skipping")
         return True
@@ -351,7 +360,7 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
         for module in sorted(set(imports)):
             result = sp.run(
                 [sys.executable, "-c", f"import {module}"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             )
             if result.returncode == 0:
                 print(f"  import {module}: OK")
@@ -413,7 +422,7 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
                      "-o", "BatchMode=yes", "-i", str(key_path),
                      "-p", str(ssh_port), f"root@{ssh_host}",
                      "curl -s -o /dev/null -w '%{http_code}' http://localhost:6006/ 2>/dev/null || echo 000"],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 )
                 code = result.stdout.strip().replace("'", "")
                 if code == "200":
@@ -674,7 +683,7 @@ def _ssh_tail_log(vast, instance_id, lines=30):
              "-o", "BatchMode=yes", "-i", str(key_path),
              "-p", str(ssh_port), f"root@{ssh_host}",
              f"tail -{lines} /var/log/onstart.log 2>/dev/null"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         return result.stdout.strip() if result.returncode == 0 else ""
     except Exception:
@@ -818,7 +827,7 @@ def rerun_experiment(args):
             ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
              "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
              download_cmd],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode != 0:
             print(f"  ERROR: Data download failed: {result.stderr[:200]}")
@@ -854,7 +863,7 @@ def rerun_experiment(args):
             ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
              "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
              run_cmd],
-            stdout=sp.PIPE, stderr=sp.STDOUT, text=True,
+            stdout=sp.PIPE, stderr=sp.STDOUT, text=True, encoding="utf-8", errors="replace",
         )
         for line in proc.stdout:
             _safe_print(f"  [run] {line.rstrip()}")
