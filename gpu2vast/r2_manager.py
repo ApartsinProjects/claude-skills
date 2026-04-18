@@ -5,7 +5,6 @@ Create, upload, download, delete buckets per job.
 
 import boto3
 import json
-import os
 import hashlib
 from pathlib import Path
 

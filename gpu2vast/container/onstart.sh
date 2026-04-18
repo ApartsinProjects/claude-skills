@@ -68,75 +68,22 @@ if [ -f /workspace/data/requirements.txt ]; then
     echo "[GPU2Vast] Extra requirements installed"
 fi
 
-# 5. Start checkpoint streamer + progress reporter in background
-python3 -c "
-import boto3, json, os, re, time, subprocess, glob, hashlib
-from pathlib import Path
+# 5. Copy and start progress reporter + checkpoint streamer in background
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/progress_reporter.py" ]; then
+    cp "$SCRIPT_DIR/progress_reporter.py" /workspace/progress_reporter.py
+elif [ -f /workspace/data/progress_reporter.py ]; then
+    cp /workspace/data/progress_reporter.py /workspace/progress_reporter.py
+fi
 
-s3 = boto3.client('s3',
-    endpoint_url=f'https://{os.environ[\"R2_ACCOUNT_ID\"]}.r2.cloudflarestorage.com',
-    aws_access_key_id=os.environ['R2_ACCESS_KEY'],
-    aws_secret_access_key=os.environ['R2_SECRET_KEY'],
-    region_name='auto')
-bucket = os.environ['R2_BUCKET']
-uploaded_checksums = {}
-
-while True:
-    try:
-        # Parse progress from log
-        log = Path('/workspace/stdout.log')
-        progress = {}
-        if log.exists():
-            for line in reversed(log.read_text(errors='replace').split('\n')[-100:]):
-                for key, pat in [('step', r'(\d+)/(\d+)'), ('loss', r'loss[=: ]+([0-9.]+)'),
-                                 ('epoch', r'epoch[=: ]+([0-9.]+)'), ('val_loss', r'val.*loss[=: ]+([0-9.]+)'),
-                                 ('accuracy', r'(?:acc|accuracy|f1)[=: ]+([0-9.]+)')]:
-                    if key not in progress:
-                        m = re.search(pat, line, re.I)
-                        if m:
-                            progress[key] = m.group(1)
-                            if key == 'step' and m.lastindex >= 2: progress['total'] = m.group(2)
-
-        # GPU info
-        progress['timestamp'] = time.time()
-        progress['job_id'] = os.environ.get('JOB_ID', '')
-        try:
-            r = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu',
-                               '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5)
-            parts = r.stdout.strip().split(', ')
-            progress['gpu'] = {'gpu_util': int(parts[0]), 'mem_used': int(parts[1]),
-                               'mem_total': int(parts[2]), 'temp': int(parts[3])}
-        except: pass
-
-        # Upload progress
-        s3.put_object(Bucket=bucket, Key='progress.json', Body=json.dumps(progress))
-
-        # Stream checkpoints to R2 (upload new/changed checkpoint files)
-        for pattern in ['checkpoints/**/*', 'checkpoint-*/**/*', '*.ckpt', '*.pt', '*.safetensors']:
-            for fp in glob.glob(f'/workspace/data/{pattern}', recursive=True):
-                path = Path(fp)
-                if not path.is_file() or path.stat().st_size == 0:
-                    continue
-                md5 = hashlib.md5(path.read_bytes()[:8192]).hexdigest()
-                if uploaded_checksums.get(fp) == md5:
-                    continue
-                key = f'checkpoints/{path.name}'
-                s3.upload_file(str(path), bucket, key)
-                uploaded_checksums[fp] = md5
-                print(f'[checkpoint] Uploaded: {path.name} ({path.stat().st_size:,} bytes)')
-
-        # Upload log tail
-        if log.exists():
-            content = log.read_bytes()
-            if len(content) > 100000:
-                content = b'[...truncated...]\n' + content[-100000:]
-            s3.put_object(Bucket=bucket, Key='logs/stdout.log', Body=content)
-
-    except Exception as e:
-        print(f'[progress] error: {e}', flush=True)
-    time.sleep(15)
-" &
-REPORTER_PID=$!
+if [ -f /workspace/progress_reporter.py ]; then
+    echo "[GPU2Vast] Starting progress reporter..."
+    python3 /workspace/progress_reporter.py &
+    REPORTER_PID=$!
+else
+    echo "[GPU2Vast] Warning: progress_reporter.py not found, inline fallback"
+    REPORTER_PID=""
+fi
 
 # 6. Start TensorBoard in background (port 6006)
 echo "[GPU2Vast] Starting TensorBoard on port 6006..."
@@ -152,8 +99,10 @@ cd /workspace/data
 eval "$EXPERIMENT_CMD" 2>&1 | tee /workspace/stdout.log
 EXIT_CODE=${PIPESTATUS[0]}
 
-# 7. Stop reporter
-kill $REPORTER_PID 2>/dev/null || true
+# 8. Stop reporter
+if [ -n "$REPORTER_PID" ]; then
+    kill $REPORTER_PID 2>/dev/null || true
+fi
 
 # 8. Upload all results to R2
 echo "[GPU2Vast] Uploading results..."

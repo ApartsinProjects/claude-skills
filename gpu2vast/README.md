@@ -68,9 +68,17 @@ After setup, connect to any instance with: `ssh -p <port> root@<host>.vast.ai`
 
 ### Observability
 
+**TensorBoard** (real-time, in browser):
+- Auto-starts on port 6006 on the instance
+- Direct browser access via public IP (no SSH needed)
+- Falls back to SSH tunnel if direct port unavailable
+- Browser opens automatically when TensorBoard is ready
+- Training scripts using the observer module log scalars automatically
+
 **Live streaming** (during run):
 - SSH tail of `/var/log/onstart.log` (training stdout)
 - R2 `progress.json` every 10-15s (step, loss, epoch, GPU util, phase)
+- Checkpoint streaming to R2 (model weights uploaded during training)
 - vast.ai system logs (boot, SSH, daemon)
 
 **End of run** (downloaded locally):
@@ -133,17 +141,35 @@ Local Machine                    vast.ai Instance
 | File | Description |
 |------|-------------|
 | `gpu_runner.py` | Main CLI orchestrator (7-stage pipeline) |
-| `vastai_manager.py` | vast.ai Python API wrapper (search, create, destroy, SSH, logs) |
-| `r2_manager.py` | Cloudflare R2 S3 client (bucket lifecycle) |
+| `vastai_manager.py` | vast.ai Python API wrapper (search, create, destroy, SSH, logs, tunnels) |
+| `r2_manager.py` | Cloudflare R2 S3 client (parallel uploads/downloads) |
 | `setup_ssh.py` | One-command SSH key setup |
-| `container/onstart.sh` | Runs on instance (install, download, train, upload) |
-| `container/progress_reporter.py` | Background R2 progress updater |
-| `container/gpu2vast_observer.py` | Drop-in observer for training scripts |
-| `container/entrypoint.sh` | Docker entrypoint (alternative to onstart) |
-| `test_comprehensive.py` | Full E2E validation (6 phases, 40+ checks) |
+| `container/onstart.sh` | Canonical instance entry point (install, download, train, upload) |
+| `container/progress_reporter.py` | Background R2 progress + checkpoint streamer |
+| `container/gpu2vast_observer.py` | Optional: drop-in observer for training scripts (TensorBoard + R2) |
+| `container/r2_download.py` | Standalone R2 downloader (used by entrypoint.sh) |
+| `container/r2_upload.py` | Standalone R2 uploader (used by entrypoint.sh) |
+| `container/entrypoint.sh` | Alternative Docker entrypoint (delegates to standalone scripts) |
+| `test_comprehensive.py` | Full E2E validation (6 phases, 46+ checks) |
+| `examples/finetune_e2e.py` | Example: fine-tune HF model with full pipeline |
+
+## CLI Options
+
+```
+--script       Command to run on the instance
+--data         Files to upload (scripts, data, configs)
+--gpu          GPU type (RTX_4090, A100, etc.)
+--max-price    Max $/hr (default: 0.50)
+--spot         Use spot instances (50-70% cheaper, interruptible)
+--image        Docker image ("auto" selects based on script imports)
+--max-hours    Max runtime before timeout (default: 2)
+--disk         Disk GB (default: 30)
+```
 
 ## Cost
 
 - Typical experiment: $0.01-0.15 (1-10 min on RTX 4090)
+- Spot instances: 50-70% cheaper than on-demand
 - R2 storage: $0.00 (free tier, deleted after use)
+- Cost estimation printed before launch
 - No ongoing charges (ephemeral everything)

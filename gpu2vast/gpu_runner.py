@@ -96,11 +96,15 @@ def run_experiment(args):
         bucket = r2.create_bucket(job_id)
         job_info["r2_bucket"] = bucket
 
-        # 2. Upload data + onstart script
+        # 2. Upload data + container scripts
         print("[2/7] Uploading data...")
         r2.upload_files(bucket, args.data)
-        onstart_path = SKILL_DIR / "container" / "onstart.sh"
-        r2.upload_files(bucket, [str(onstart_path)], prefix="")
+        container_files = [
+            str(SKILL_DIR / "container" / "onstart.sh"),
+            str(SKILL_DIR / "container" / "progress_reporter.py"),
+            str(SKILL_DIR / "container" / "gpu2vast_observer.py"),
+        ]
+        r2.upload_files(bucket, container_files, prefix="")
         r2.upload_config(bucket, {
             "experiment_cmd": args.script,
             "results_pattern": args.results_pattern,
@@ -174,19 +178,12 @@ def run_experiment(args):
         job_info["status"] = "running"
         job_path.write_text(json.dumps(job_info, indent=2))
 
-        # 6. Open TensorBoard access
+        # 6. Open TensorBoard in browser
         tb_tunnel = None
-        conn = vast.get_connection_info(instance_id)
-        tb_port = conn.get("port_mappings", {}).get("6006/tcp", {}).get("host_port")
-        if tb_port and conn.get("public_ip"):
-            print(f"  TensorBoard (direct): http://{conn['public_ip']}:{tb_port}")
-        else:
-            try:
-                tb_tunnel = vast.open_tunnel(instance_id, remote_port=6006, local_port=6006)
-                print("  TensorBoard (tunnel): http://localhost:6006")
-            except Exception:
-                print("  TensorBoard: use 'ssh -p {ssh_port} root@{ssh_host} -L 6006:localhost:6006'"
-                      .format(**conn) if conn.get("ssh_host") else "  TensorBoard: not available")
+        tb_url = _setup_tensorboard(vast, instance_id)
+        if tb_url:
+            job_info["tensorboard_url"] = tb_url
+            job_path.write_text(json.dumps(job_info, indent=2))
 
         # 6. Monitor via R2 + stream vast.ai logs
         print("[6/7] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
@@ -211,8 +208,6 @@ def run_experiment(args):
         print(f"  Recover: python gpu_runner.py recover --job-id {job_id}")
         job_info["status"] = "detached"
         job_path.write_text(json.dumps(job_info, indent=2))
-        if tb_tunnel:
-            tb_tunnel.kill()
         return
 
     except Exception as e:
@@ -222,9 +217,89 @@ def run_experiment(args):
         job_path.write_text(json.dumps(job_info, indent=2))
 
     finally:
-        if tb_tunnel:
-            tb_tunnel.kill()
         _cleanup(vast, r2, instance_id, bucket, job_info, job_path)
+
+
+def _setup_tensorboard(vast, instance_id, timeout=120):
+    """Wait for TensorBoard to start on the instance, then open it in the browser.
+
+    Tries direct port access first (no SSH needed), falls back to SSH tunnel.
+    Returns the URL that was opened, or empty string on failure.
+    """
+    import subprocess as sp
+    import webbrowser
+
+    print("  Waiting for TensorBoard to become available...")
+
+    conn = vast.get_connection_info(instance_id)
+    ssh_host = conn.get("ssh_host", "")
+    ssh_port = conn.get("ssh_port", "")
+    public_ip = conn.get("public_ip", "")
+
+    # Try direct port first (check port mappings)
+    tb_direct_port = conn.get("port_mappings", {}).get("6006/tcp", {}).get("host_port")
+
+    # Poll until TensorBoard responds (via SSH check)
+    key_path = KEYS_DIR / "ssh" / "gpu2vast_ed25519"
+    start = time.time()
+    tb_ready = False
+
+    while time.time() - start < timeout:
+        elapsed = int(time.time() - start)
+        if ssh_host and ssh_port and key_path.exists():
+            try:
+                result = sp.run(
+                    ["ssh", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=no",
+                     "-o", "BatchMode=yes", "-i", str(key_path),
+                     "-p", str(ssh_port), f"root@{ssh_host}",
+                     "curl -s -o /dev/null -w '%{http_code}' http://localhost:6006/ 2>/dev/null || echo 000"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                code = result.stdout.strip().replace("'", "")
+                if code == "200":
+                    tb_ready = True
+                    break
+                print(f"\r  TensorBoard: waiting ({elapsed}s, http={code})    ", end="", flush=True)
+            except Exception:
+                print(f"\r  TensorBoard: waiting ({elapsed}s)    ", end="", flush=True)
+        else:
+            print(f"\r  TensorBoard: waiting for SSH ({elapsed}s)    ", end="", flush=True)
+        time.sleep(5)
+
+    if not tb_ready:
+        print(f"\n  TensorBoard: not ready after {timeout}s (training may still work)")
+        return ""
+
+    print()
+
+    # Determine best URL and open browser
+    tb_url = ""
+    if tb_direct_port and public_ip:
+        tb_url = f"http://{public_ip}:{tb_direct_port}"
+        print(f"  TensorBoard (direct): {tb_url}")
+    elif ssh_host and ssh_port and key_path.exists():
+        # Open SSH tunnel in background
+        try:
+            sp.Popen(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+                 "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
+                 "-L", "6006:localhost:6006", "-N"],
+                stdout=sp.DEVNULL, stderr=sp.DEVNULL,
+            )
+            tb_url = "http://localhost:6006"
+            print(f"  TensorBoard (tunnel): {tb_url}")
+        except Exception as e:
+            print(f"  TensorBoard tunnel failed: {e}")
+            return ""
+
+    if tb_url:
+        print(f"  Opening browser: {tb_url}")
+        try:
+            webbrowser.open(tb_url)
+        except Exception:
+            print(f"  Could not open browser automatically. Open manually: {tb_url}")
+
+    return tb_url
 
 
 def _cleanup(vast, r2, instance_id, bucket, job_info, job_path):
