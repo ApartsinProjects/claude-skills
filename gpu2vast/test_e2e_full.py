@@ -257,7 +257,7 @@ set -e
 echo '[GPU2Vast] Booted'
 
 echo '[GPU2Vast] Installing packages...'
-pip install -q boto3 transformers tensorboard 2>/dev/null || true
+pip install -q boto3 torch transformers tensorboard 2>/dev/null || true
 
 echo '[GPU2Vast] Downloading data from R2...'
 python3 -c "
