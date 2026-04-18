@@ -253,6 +253,8 @@ skey = r2_config["secret_key"]
 
 onstart_parts = [
     "echo '[GPU2Vast] Booted'",
+    "echo '[GPU2Vast] Installing packages...'",
+    "pip install -q boto3 transformers tensorboard 2>/dev/null || true",
     "echo '[GPU2Vast] Downloading data from R2...'",
     f"python3 -c \""
     f"import boto3,os; "
@@ -263,8 +265,6 @@ onstart_parts = [
     f"for p in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}',Prefix='data/') "
     f"for o in p.get('Contents',[])]; "
     f"print('Downloaded all data')\"",
-    "echo '[GPU2Vast] Installing packages...'",
-    "pip install -q boto3 transformers torch tensorboard 2>/dev/null || true",
     "echo '[GPU2Vast] Starting TensorBoard on port 6006...'",
     "mkdir -p /workspace/data/runs && nohup tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 & echo '[GPU2Vast] Running training...'",
     "cd /workspace/data && python3 -u train.py 2>&1 | tee /workspace/stdout.log",
