@@ -264,6 +264,19 @@ def run_experiment(args):
         if not instance_id:
             raise RuntimeError(f"All {max_retries} hosts failed to boot")
         print(f"  Instance {instance_id} is running")
+
+        actual_info = vast.get_instance(instance_id)
+        actual_price = actual_info.get("dph_total", 0) if isinstance(actual_info, dict) else 0
+        offer_price = offer.get("dph_total", 0)
+        if actual_price and abs(actual_price - offer_price) > 0.01:
+            print(f"  NOTE: actual price ${actual_price:.3f}/hr (offer listed ${offer_price:.3f}/hr)")
+            est = vast.estimate_cost(offer | {"dph_total": actual_price}, args.max_hours * 60,
+                                     data_gb=max(data_size_gb, 0.01))
+            print(f"  Revised ETA: ~{est['total_minutes']:.0f} min, ~${est['total_cost']:.4f}")
+            job_info["actual_price_per_hour"] = actual_price
+        else:
+            job_info["actual_price_per_hour"] = offer_price
+
         job_info["status"] = "running"
         job_path.write_text(json.dumps(job_info, indent=2))
 
