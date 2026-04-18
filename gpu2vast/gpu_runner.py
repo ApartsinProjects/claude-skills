@@ -111,6 +111,18 @@ def run_experiment(args):
         return
 
     try:
+        # 0. Local smoke test: verify script imports work before spending money
+        if not args.skip_smoke:
+            print("[0/7] Local smoke test (checking imports + dependencies)...")
+            smoke_ok = _local_smoke_test(args.data, args.script)
+            if not smoke_ok:
+                print("  Smoke test FAILED. Fix errors above before running on vast.ai.")
+                print("  Use --skip-smoke to bypass (not recommended).")
+                job_info["status"] = "smoke_test_failed"
+                job_path.write_text(json.dumps(job_info, indent=2))
+                return
+            print("  Smoke test passed")
+
         # 1. Create R2 bucket
         print("[1/7] Creating R2 bucket...")
         r2 = R2Manager(config["r2"])
@@ -297,6 +309,59 @@ def run_experiment(args):
     finally:
         _cleanup(vast, r2, instance_id, bucket, job_info, job_path,
                  keep_instance=getattr(args, 'keep_alive', False))
+
+
+def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
+    """Run a quick local check to verify the training script's imports work.
+
+    Extracts .py files from data, compiles them and checks imports.
+    Does NOT run training (no GPU needed). Catches missing packages early.
+    """
+    import subprocess as sp
+
+    py_files = [f for f in data_files if f.endswith(".py") and Path(f).exists()]
+    if not py_files:
+        print("  No Python files in --data, skipping")
+        return True
+
+    for py_file in py_files:
+        code = Path(py_file).read_text(errors="replace")
+        try:
+            compile(code, py_file, "exec")
+            print(f"  {Path(py_file).name}: syntax OK")
+        except SyntaxError as e:
+            print(f"  {Path(py_file).name}: SYNTAX ERROR: {e}")
+            return False
+
+        imports = []
+        for line in code.split("\n"):
+            line = line.strip()
+            if line.startswith("import ") or line.startswith("from "):
+                if line.startswith("from "):
+                    module = line.split()[1].split(".")[0]
+                else:
+                    module = line.split()[1].split(".")[0].rstrip(",")
+                stdlib = {"os", "sys", "json", "time", "pathlib", "shutil",
+                          "glob", "re", "math", "collections", "functools",
+                          "typing", "dataclasses", "argparse", "hashlib",
+                          "abc", "io", "copy", "logging", "warnings"}
+                if module not in stdlib:
+                    imports.append(module)
+
+        for module in sorted(set(imports)):
+            result = sp.run(
+                [sys.executable, "-c", f"import {module}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                print(f"  import {module}: OK")
+            else:
+                err = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown"
+                print(f"  import {module}: MISSING ({err})")
+                print(f"  Fix: pip install {module}")
+                return False
+
+    return True
 
 
 def _setup_tensorboard(vast, instance_id, timeout=120):
@@ -833,6 +898,8 @@ def main():
                         help="Use spot/interruptible instances (50-70%% cheaper)")
     run_p.add_argument("--keep-alive", action="store_true",
                         help="Keep instance alive after job (for rerun)")
+    run_p.add_argument("--skip-smoke", action="store_true",
+                        help="Skip local smoke test (not recommended)")
     run_p.add_argument("--results-pattern", default="results/*")
     run_p.add_argument("--local-results", default="./results/")
     run_p.set_defaults(func=run_experiment)

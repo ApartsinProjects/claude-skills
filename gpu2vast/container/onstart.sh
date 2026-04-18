@@ -14,10 +14,10 @@ ts "Installing packages..."
 T0=$SECONDS
 if command -v uv &> /dev/null; then
     uv pip install --system boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard
+        bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf
 else
     pip install boto3 torch transformers accelerate peft trl \
-        bitsandbytes sentence-transformers datasets requests tensorboard
+        bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf
 fi
 ts "Packages installed ($((SECONDS - T0))s)"
 

@@ -1,19 +1,19 @@
 import json, os, sys, time
-print("[train] === Sentiment Classification with bert-tiny ===")
+print("[train] === Sentiment Classification with distilbert ===")
 sys.stdout.flush()
 
 print("[train] Checking GPU...")
 sys.stdout.flush()
 os.system("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'No GPU'")
 
-print("[train] Loading bert-tiny from HuggingFace...")
+print("[train] Loading distilbert-base-uncased from HuggingFace...")
 sys.stdout.flush()
 t0 = time.time()
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-model_name = "prajjwal1/bert-tiny"
+model_name = "distilbert-base-uncased"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=3)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
