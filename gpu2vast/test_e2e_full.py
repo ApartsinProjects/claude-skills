@@ -271,7 +271,7 @@ for page in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}', Pref
     for obj in page.get('Contents', []):
         key = obj['Key']
         s3.download_file('{bucket}', key, '/workspace/data/' + key.split('/')[-1])
-        print(f'  Downloaded: {{key}} ({{obj[\"Size\"]:,}} bytes)')
+        print(f'  Downloaded: {{key}} ({{obj[\"Size\"]}} bytes)')
 "
 
 echo '[GPU2Vast] Starting TensorBoard...'
@@ -309,6 +309,28 @@ print(f'Results uploaded: {{len(uploaded)}} files')
 "
 echo '[GPU2Vast] ALL DONE'
 """
+
+# Local validation: check bash syntax + embedded Python syntax
+import tempfile, subprocess as _sp
+with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+    f.write(onstart_script)
+    tmp_sh = f.name
+r = _sp.run(["bash", "-n", tmp_sh], capture_output=True, text=True)
+if r.returncode != 0:
+    print(f"  FAIL: bash syntax error in onstart.sh: {r.stderr}")
+    sys.exit(1)
+
+# Extract embedded python3 -c blocks and compile-check them
+import re as _re
+for i, m in enumerate(_re.finditer(r'python3 -c "(.*?)"', onstart_script, _re.DOTALL)):
+    py_code = m.group(1)
+    try:
+        compile(py_code, f"<onstart_python_block_{i}>", "exec")
+    except SyntaxError as e:
+        print(f"  FAIL: Python syntax error in onstart block {i}: {e}")
+        sys.exit(1)
+print("  Local validation: bash + Python syntax OK")
+os.unlink(tmp_sh)
 
 # Upload the onstart script to R2 so the instance can fetch it
 r2.s3.put_object(Bucket=bucket, Key="onstart.sh", Body=onstart_script.encode())
