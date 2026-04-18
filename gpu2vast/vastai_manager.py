@@ -40,12 +40,16 @@ def _get_api_key():
 
 
 def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
-               disk_gb: int = 30, num_gpus: int = 1) -> list[dict]:
-    """Search for available GPU offers. Accepts both 'RTX_4090' and 'RTX 4090' formats."""
+               disk_gb: int = 30, num_gpus: int = 1,
+               offer_type: str = "on-demand") -> list[dict]:
+    """Search for available GPU offers. Accepts both 'RTX_4090' and 'RTX 4090' formats.
+
+    offer_type: "on-demand" (default) or "bid" (spot/interruptible, 50-70% cheaper)
+    """
     from vastai.api import offers as offers_api
-    # API uses spaces, CLI uses underscores
     api_gpu_name = gpu_name.replace("_", " ")
-    print(f"  [vast] Querying offers: {api_gpu_name} x{num_gpus}, <=${max_price}/hr, {disk_gb}GB disk...")
+    type_label = "spot" if offer_type == "bid" else "on-demand"
+    print(f"  [vast] Querying {type_label} offers: {api_gpu_name} x{num_gpus}, <=${max_price}/hr, {disk_gb}GB disk...")
     client = _get_client()
     query = {
         "gpu_name": {"eq": api_gpu_name},
@@ -56,7 +60,8 @@ def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
         "reliability2": {"gte": 0.95},
     }
     try:
-        results = offers_api.search_offers(client, query=query, storage=float(disk_gb))
+        results = offers_api.search_offers(client, query=query, storage=float(disk_gb),
+                                           offer_type=offer_type)
     except Exception as e:
         print(f"  [vast] API search failed ({e}), falling back to CLI...")
         results = _search_gpu_cli(gpu_name, max_price, disk_gb, num_gpus)
@@ -72,6 +77,98 @@ def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
         return scored
     print("  [vast] No offers returned")
     return []
+
+
+def estimate_cost(offer: dict, estimated_minutes: float) -> dict:
+    """Estimate total job cost for a given offer and runtime."""
+    price_per_hour = offer.get("dph_total", 0)
+    hours = estimated_minutes / 60
+    compute_cost = price_per_hour * hours
+    storage_cost = 0.0  # R2 free tier
+    return {
+        "compute_cost": round(compute_cost, 4),
+        "storage_cost": storage_cost,
+        "total_cost": round(compute_cost + storage_cost, 4),
+        "price_per_hour": price_per_hour,
+        "estimated_minutes": estimated_minutes,
+        "gpu": offer.get("gpu_name", "?"),
+    }
+
+
+# ── Docker Image Selection ──
+
+DOCKER_IMAGES = {
+    "pytorch": {
+        "image": "vastai/pytorch",
+        "packages": ["torch", "torchvision"],
+        "description": "Pre-cached PyTorch (fastest boot)",
+    },
+    "transformers": {
+        "image": "huggingface/transformers-pytorch-gpu",
+        "packages": ["torch", "transformers", "accelerate", "datasets", "tokenizers"],
+        "description": "HuggingFace Transformers + PyTorch",
+    },
+    "full-ml": {
+        "image": "nvcr.io/nvidia/pytorch:24.01-py3",
+        "packages": ["torch", "torchvision", "numpy", "scipy", "pandas"],
+        "description": "NVIDIA NGC full ML stack",
+    },
+    "cuda": {
+        "image": "nvidia/cuda:12.1.0-runtime-ubuntu22.04",
+        "packages": [],
+        "description": "Base CUDA runtime (install everything yourself)",
+    },
+}
+
+
+def select_image(script_path: str = None, requirements: list[str] = None) -> str:
+    """Select the best Docker image based on script imports or explicit requirements.
+
+    Returns the docker image string. Examines the script for imports to determine
+    which pre-built image saves the most pip install time.
+    """
+    needed = set(requirements or [])
+
+    if script_path:
+        try:
+            content = Path(script_path).read_text(errors="replace")
+            import_map = {
+                "transformers": "transformers",
+                "from transformers": "transformers",
+                "accelerate": "accelerate",
+                "datasets": "datasets",
+                "peft": "peft",
+                "trl": "trl",
+                "sentence_transformers": "sentence-transformers",
+                "bitsandbytes": "bitsandbytes",
+                "torch": "torch",
+                "tensorflow": "tensorflow",
+                "jax": "jax",
+            }
+            for pattern, pkg in import_map.items():
+                if pattern in content:
+                    needed.add(pkg)
+        except Exception:
+            pass
+
+    # Score each image by how many needed packages it already has
+    best_image = "vastai/pytorch"
+    best_score = 0
+
+    for name, info in DOCKER_IMAGES.items():
+        provided = set(info["packages"])
+        overlap = len(needed & provided)
+        if overlap > best_score:
+            best_score = overlap
+            best_image = info["image"]
+
+    # If transformers/peft/trl needed, use HF image
+    hf_packages = {"transformers", "accelerate", "peft", "trl", "datasets", "sentence-transformers"}
+    if needed & hf_packages:
+        best_image = DOCKER_IMAGES["transformers"]["image"]
+
+    print(f"  [vast] Selected image: {best_image} (needed: {', '.join(sorted(needed)) or 'base only'})")
+    return best_image
 
 
 def _cost_score(offer: dict) -> float:

@@ -30,21 +30,41 @@ class R2Manager:
         print(f"  [r2] Bucket created")
         return bucket
 
-    def upload_files(self, bucket: str, files: list[str], prefix: str = "data/"):
-        """Upload local files to R2 bucket."""
+    def upload_files(self, bucket: str, files: list[str], prefix: str = "data/",
+                     parallel: bool = True):
+        """Upload local files to R2 bucket. Uses parallel uploads for speed."""
         manifest = {}
+        valid_files = []
         for filepath in files:
             path = Path(filepath)
             if not path.exists():
                 print(f"  SKIP (not found): {filepath}")
                 continue
-            key = prefix + path.name
-            md5 = hashlib.md5(path.read_bytes()).hexdigest()
-            self.s3.upload_file(str(path), bucket, key)
-            manifest[key] = {"size": path.stat().st_size, "md5": md5}
-            print(f"  Uploaded: {path.name} ({path.stat().st_size:,} bytes)")
+            valid_files.append(path)
 
-        # Upload manifest
+        if parallel and len(valid_files) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _upload_one(path):
+                key = prefix + path.name
+                md5 = hashlib.md5(path.read_bytes()).hexdigest()
+                self.s3.upload_file(str(path), bucket, key)
+                return key, {"size": path.stat().st_size, "md5": md5}
+
+            with ThreadPoolExecutor(max_workers=min(8, len(valid_files))) as pool:
+                futures = {pool.submit(_upload_one, p): p for p in valid_files}
+                for future in as_completed(futures):
+                    key, info = future.result()
+                    manifest[key] = info
+                    print(f"  Uploaded: {Path(key).name} ({info['size']:,} bytes)")
+        else:
+            for path in valid_files:
+                key = prefix + path.name
+                md5 = hashlib.md5(path.read_bytes()).hexdigest()
+                self.s3.upload_file(str(path), bucket, key)
+                manifest[key] = {"size": path.stat().st_size, "md5": md5}
+                print(f"  Uploaded: {path.name} ({path.stat().st_size:,} bytes)")
+
         self.s3.put_object(
             Bucket=bucket, Key="manifest.json",
             Body=json.dumps(manifest, indent=2),
@@ -60,12 +80,14 @@ class R2Manager:
         )
         print(f"  [r2] Config uploaded")
 
-    def download_results(self, bucket: str, local_dir: str, prefix: str = "results/"):
-        """Download all results from R2 to local directory."""
+    def download_results(self, bucket: str, local_dir: str, prefix: str = "results/",
+                         parallel: bool = True):
+        """Download all results from R2 to local directory. Uses parallel downloads."""
         print(f"  [r2] Downloading results from {bucket}/{prefix} to {local_dir}")
         Path(local_dir).mkdir(parents=True, exist_ok=True)
-        downloaded = []
 
+        # Collect all objects first
+        to_download = []
         paginator = self.s3.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
@@ -75,9 +97,28 @@ class R2Manager:
                     continue
                 local_path = Path(local_dir) / filename
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-                self.s3.download_file(bucket, key, str(local_path))
-                print(f"  [r2] Downloaded: {filename} ({obj['Size']:,} bytes)")
-                downloaded.append(str(local_path))
+                to_download.append((key, str(local_path), obj["Size"]))
+
+        downloaded = []
+        if parallel and len(to_download) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _download_one(item):
+                key, local_path, size = item
+                self.s3.download_file(bucket, key, local_path)
+                return local_path, Path(key).name, size
+
+            with ThreadPoolExecutor(max_workers=min(8, len(to_download))) as pool:
+                futures = {pool.submit(_download_one, item): item for item in to_download}
+                for future in as_completed(futures):
+                    local_path, name, size = future.result()
+                    print(f"  [r2] Downloaded: {name} ({size:,} bytes)")
+                    downloaded.append(local_path)
+        else:
+            for key, local_path, size in to_download:
+                self.s3.download_file(bucket, key, local_path)
+                print(f"  [r2] Downloaded: {Path(key).name} ({size:,} bytes)")
+                downloaded.append(local_path)
 
         print(f"  [r2] Downloaded {len(downloaded)} result files")
         return downloaded

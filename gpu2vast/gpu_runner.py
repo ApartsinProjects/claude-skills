@@ -109,14 +109,21 @@ def run_experiment(args):
         print("  Upload complete")
 
         # 3. Find GPU
-        print(f"[3/7] Searching for {args.gpu} <= ${args.max_price}/hr...")
+        offer_type = "bid" if args.spot else "on-demand"
+        print(f"[3/7] Searching for {args.gpu} <= ${args.max_price}/hr ({offer_type})...")
         offers = vast.search_gpu(
             gpu_name=args.gpu, max_price=args.max_price, disk_gb=args.disk,
+            offer_type=offer_type,
         )
         if not offers:
-            raise RuntimeError(f"No {args.gpu} available at <=${args.max_price}/hr")
+            raise RuntimeError(f"No {args.gpu} available at <=${args.max_price}/hr ({offer_type})")
         offer = offers[0]
         print(f"  Selected: {offer.get('gpu_name')} @ ${offer.get('dph_total', '?')}/hr (offer={offer['id']})")
+
+        # Cost estimation
+        est = vast.estimate_cost(offer, args.max_hours * 60)
+        print(f"  Estimated max cost: ${est['total_cost']:.4f} ({est['estimated_minutes']:.0f} min)")
+        job_info["estimated_cost"] = est["total_cost"]
 
         # 4. Launch instance
         print("[4/7] Launching instance...")
@@ -125,20 +132,32 @@ def run_experiment(args):
         if hf_key_file.exists():
             hf_token = hf_key_file.read_text().strip()
 
+        # Dynamic image selection: analyze script imports if --image=auto
+        docker_image = args.image
+        if docker_image == "auto":
+            script_files = [f for f in args.data if f.endswith(".py")]
+            docker_image = vast.select_image(
+                script_path=script_files[0] if script_files else None,
+            )
+            print(f"  Auto-selected image: {docker_image}")
+
         env_vars = {
             "R2_ACCOUNT_ID": config["r2"]["account_id"],
             "R2_ACCESS_KEY": config["r2"]["access_key"],
             "R2_SECRET_KEY": config["r2"]["secret_key"],
             "R2_BUCKET": bucket,
             "HF_TOKEN": hf_token,
+            "HUGGING_FACE_HUB_TOKEN": hf_token,
             "JOB_ID": job_id,
             "EXPERIMENT_CMD": args.script,
             "RESULTS_PATTERN": args.results_pattern,
         }
+        if hf_token:
+            print(f"  HuggingFace token: loaded (for gated models)")
 
         instance = vast.create_instance(
             offer_id=offer["id"],
-            docker_image=args.image,
+            docker_image=docker_image,
             env_vars=env_vars,
             disk_gb=args.disk,
         )
@@ -517,8 +536,10 @@ def main():
     run_p.add_argument("--max-price", type=float, default=0.50, help="Max $/hr")
     run_p.add_argument("--max-hours", type=float, default=2, help="Max runtime hours")
     run_p.add_argument("--disk", type=int, default=30, help="Disk GB")
-    run_p.add_argument("--image", default="vastai/pytorch",
-                        help="Docker image (vastai/pytorch is pre-cached on hosts)")
+    run_p.add_argument("--image", default="auto",
+                        help="Docker image ('auto' selects based on script imports)")
+    run_p.add_argument("--spot", action="store_true",
+                        help="Use spot/interruptible instances (50-70%% cheaper)")
     run_p.add_argument("--results-pattern", default="results/*")
     run_p.add_argument("--local-results", default="./results/")
     run_p.set_defaults(func=run_experiment)
