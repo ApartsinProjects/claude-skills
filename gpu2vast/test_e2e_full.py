@@ -360,8 +360,14 @@ for attempt in range(max_retries):
         print(f"\n[6/10] Waiting for boot...")
         booted = vast.wait_for_running(instance_id, timeout=300)
         if booted:
-            break
-        print(f"  Boot failed, destroying and retrying...")
+            time.sleep(5)
+            if vast.ssh_health_check(instance_id):
+                print(f"  SSH health check: OK")
+                break
+            else:
+                print(f"  SSH health check failed (host broken)")
+                booted = False
+        print(f"  Boot/health check failed, destroying and retrying...")
         vast.destroy_instance(instance_id)
         instance_id = None
     except RuntimeError as e:

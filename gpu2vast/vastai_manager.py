@@ -364,6 +364,30 @@ def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
     return False
 
 
+def ssh_health_check(instance_id: int, timeout: int = 15) -> bool:
+    """Verify SSH actually works on the instance. Returns True if healthy."""
+    info = get_instance(instance_id)
+    if not isinstance(info, dict):
+        return False
+    ssh_host = info.get("ssh_host", "")
+    ssh_port = info.get("ssh_port", "")
+    if not ssh_host or not ssh_port:
+        return False
+    key_path = KEYS_DIR / "ssh" / "gpu2vast_ed25519"
+    if not key_path.exists():
+        return True  # can't check without key, assume OK
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", f"ConnectTimeout={timeout}", "-o", "StrictHostKeyChecking=no",
+             "-o", "BatchMode=yes", "-i", str(key_path),
+             "-p", str(ssh_port), f"root@{ssh_host}", "echo ok"],
+            capture_output=True, text=True, timeout=timeout + 5,
+        )
+        return result.returncode == 0 and "ok" in result.stdout
+    except Exception:
+        return False
+
+
 def is_instance_alive(instance_id: int) -> bool:
     """Check if an instance still exists and is not destroyed."""
     try:
