@@ -251,40 +251,79 @@ acct = r2_config["account_id"]
 akey = r2_config["access_key"]
 skey = r2_config["secret_key"]
 
-onstart_parts = [
-    "echo '[GPU2Vast] Booted'",
-    "echo '[GPU2Vast] Installing packages...'",
-    "pip install -q boto3 transformers tensorboard 2>/dev/null || true",
-    "echo '[GPU2Vast] Downloading data from R2...'",
+# Write a proper bash script instead of fragile && chains
+onstart_script = f"""#!/bin/bash
+set -e
+echo '[GPU2Vast] Booted'
+
+echo '[GPU2Vast] Installing packages...'
+pip install -q boto3 transformers tensorboard 2>/dev/null || true
+
+echo '[GPU2Vast] Downloading data from R2...'
+python3 -c "
+import boto3, os
+s3 = boto3.client('s3',
+    endpoint_url='https://{acct}.r2.cloudflarestorage.com',
+    aws_access_key_id='{akey}', aws_secret_access_key='{skey}',
+    region_name='auto')
+os.makedirs('/workspace/data', exist_ok=True)
+for page in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}', Prefix='data/'):
+    for obj in page.get('Contents', []):
+        key = obj['Key']
+        s3.download_file('{bucket}', key, '/workspace/data/' + key.split('/')[-1])
+        print(f'  Downloaded: {{key}} ({{obj[\"Size\"]:,}} bytes)')
+"
+
+echo '[GPU2Vast] Starting TensorBoard...'
+mkdir -p /workspace/data/runs
+nohup tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 &
+
+echo '[GPU2Vast] Running training...'
+cd /workspace/data
+python3 -u train.py 2>&1 | tee /workspace/stdout.log
+EXIT_CODE=${{PIPESTATUS[0]}}
+echo "[GPU2Vast] Training exit code: $EXIT_CODE"
+
+echo '[GPU2Vast] Uploading results...'
+python3 -c "
+import boto3, json, glob, time
+from pathlib import Path
+s3 = boto3.client('s3',
+    endpoint_url='https://{acct}.r2.cloudflarestorage.com',
+    aws_access_key_id='{akey}', aws_secret_access_key='{skey}',
+    region_name='auto')
+uploaded = {{}}
+for fp in glob.glob('results/**/*', recursive=True):
+    p = Path(fp)
+    if p.is_file():
+        key = 'results/' + '/'.join(p.parts[p.parts.index('results')+1:])
+        s3.upload_file(str(p), '{bucket}', key)
+        uploaded[key] = {{'size': p.stat().st_size}}
+        print(f'  Uploaded: {{p.name}} ({{p.stat().st_size:,}} bytes)')
+if Path('/workspace/stdout.log').exists():
+    s3.upload_file('/workspace/stdout.log', '{bucket}', 'logs/stdout.log')
+s3.put_object(Bucket='{bucket}', Key='done.json',
+    Body=json.dumps({{'status': 'success' if $EXIT_CODE == 0 else 'failed',
+                      'exit_code': $EXIT_CODE, 'files': uploaded, 'ts': time.time()}}))
+print(f'Results uploaded: {{len(uploaded)}} files')
+"
+echo '[GPU2Vast] ALL DONE'
+"""
+
+# Upload the onstart script to R2 so the instance can fetch it
+r2.s3.put_object(Bucket=bucket, Key="onstart.sh", Body=onstart_script.encode())
+print(f"  Uploaded onstart.sh to R2")
+
+# The instance onstart_cmd: download and run the script from R2
+onstart_cmd = (
+    f"pip install -q boto3 2>/dev/null; "
     f"python3 -c \""
-    f"import boto3,os; "
+    f"import boto3; "
     f"s3=boto3.client('s3',endpoint_url='https://{acct}.r2.cloudflarestorage.com',"
     f"aws_access_key_id='{akey}',aws_secret_access_key='{skey}',region_name='auto'); "
-    f"os.makedirs('/workspace/data',exist_ok=True); "
-    f"[s3.download_file('{bucket}',o['Key'],'/workspace/data/'+o['Key'].split('/')[-1]) "
-    f"for p in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}',Prefix='data/') "
-    f"for o in p.get('Contents',[])]; "
-    f"print('Downloaded all data')\"",
-    "echo '[GPU2Vast] Starting TensorBoard on port 6006...'",
-    "mkdir -p /workspace/data/runs && nohup tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 & echo '[GPU2Vast] Running training...'",
-    "cd /workspace/data && python3 -u train.py 2>&1 | tee /workspace/stdout.log",
-    "EXIT_CODE=${PIPESTATUS[0]}",
-    "echo \"[GPU2Vast] Training exit code: $EXIT_CODE\"",
-    "echo '[GPU2Vast] Uploading results to R2...'",
-    f"python3 -c \""
-    f"import boto3,json,glob,time,os; from pathlib import Path; "
-    f"s3=boto3.client('s3',endpoint_url='https://{acct}.r2.cloudflarestorage.com',"
-    f"aws_access_key_id='{akey}',aws_secret_access_key='{skey}',region_name='auto'); "
-    f"[s3.upload_file(fp,'{bucket}','results/'+'/'.join(Path(fp).parts[Path(fp).parts.index('results')+1:])) "
-    f"for fp in glob.glob('results/**/*',recursive=True) if Path(fp).is_file()]; "
-    f"s3.upload_file('/workspace/stdout.log','{bucket}','logs/stdout.log') if Path('/workspace/stdout.log').exists() else None; "
-    f"exit_code=int(os.environ.get('EXIT_CODE','0')); "
-    f"s3.put_object(Bucket='{bucket}',Key='done.json',"
-    f"Body=json.dumps({{'status':'success','exit_code':0,'ts':time.time()}})); "
-    f"print('Results uploaded')\"",
-    "echo '[GPU2Vast] ALL DONE'",
-]
-onstart_cmd = " && ".join(onstart_parts)
+    f"s3.download_file('{bucket}','onstart.sh','/tmp/onstart.sh')\"; "
+    f"bash /tmp/onstart.sh"
+)
 
 instance = vast.create_instance(
     offer_id=offer["id"],
