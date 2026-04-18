@@ -160,9 +160,45 @@ ETA: ~11 min total, ~$0.0440
   upload=0m  boot=2m  setup=3m  train=5m  fetch=0m
 ```
 
-### Observer Module (optional)
+### Training Script Output Convention
 
-Drop-in observability for training scripts:
+When Claude generates training scripts for GPU2Vast, it MUST include these
+print statements so the monitoring loop can stream progress in real-time.
+All prints must use `sys.stdout.flush()` after each line.
+
+```python
+import sys
+
+# Phase markers (detected by SSH log streaming)
+print("[train] Loading model from HuggingFace..."); sys.stdout.flush()
+print(f"[train] Model loaded: {model_name} ({params:,} params) on {device}"); sys.stdout.flush()
+
+print("[train] Loading data..."); sys.stdout.flush()
+print(f"[train] Loaded {len(data)} samples"); sys.stdout.flush()
+
+print("[train] Training ({total_steps} steps)..."); sys.stdout.flush()
+for step in range(1, total_steps + 1):
+    loss = train_step()
+    # This format is parsed by progress_reporter.py
+    print(f"  {step}/{total_steps} loss={loss:.4f} epoch={epoch}"); sys.stdout.flush()
+
+print(f"[train] Eval: loss={eval_loss:.4f}, accuracy={accuracy:.4f}"); sys.stdout.flush()
+
+print("[train] Saving results..."); sys.stdout.flush()
+print(f"[train] Loss: {initial_loss:.4f} -> {final_loss:.4f}"); sys.stdout.flush()
+print("[train] === DONE ==="); sys.stdout.flush()
+```
+
+Key rules:
+- `[train]` prefix for phase markers
+- `step/total loss=X.XXXX` format for progress (parsed by progress_reporter)
+- `epoch=N` in step lines for epoch tracking
+- `=== DONE ===` as completion marker
+- `sys.stdout.flush()` after every print (SSH tail won't see buffered output)
+
+### Observer Module (optional, advanced)
+
+For automatic R2 + TensorBoard reporting without manual prints:
 
 ```python
 from gpu2vast_observer import observer
@@ -178,7 +214,7 @@ for step in range(total_steps):
 observer.done(final_loss=loss)
 ```
 
-Automatically reports to R2 + TensorBoard. No-op if R2 env vars not set.
+Automatically reports to R2 progress.json + TensorBoard. No-op if R2 env vars not set.
 
 ## Architecture
 
