@@ -190,21 +190,44 @@ def run_experiment(args):
         if hf_token:
             print(f"  HuggingFace token: loaded (for gated models)")
 
-        instance = vast.create_instance(
-            offer_id=offer["id"],
-            docker_image=docker_image,
-            env_vars=env_vars,
-            disk_gb=args.disk,
-        )
-        instance_id = instance.get("new_contract") or instance.get("instance_id")
-        job_info["instance_id"] = instance_id
-        job_info["status"] = "booting"
-        job_path.write_text(json.dumps(job_info, indent=2))
+        # Launch with retry (some hosts have broken GPU/Docker setups)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                cur_offer = offers[attempt] if attempt < len(offers) else offer
+                if attempt > 0:
+                    print(f"  Retry {attempt + 1}/{max_retries}: offer {cur_offer['id']}")
+                instance = vast.create_instance(
+                    offer_id=cur_offer["id"],
+                    docker_image=docker_image,
+                    env_vars=env_vars,
+                    disk_gb=args.disk,
+                )
+                instance_id = instance.get("new_contract") or instance.get("instance_id")
+                job_info["instance_id"] = instance_id
+                job_info["status"] = "booting"
+                job_path.write_text(json.dumps(job_info, indent=2))
 
-        # 5. Wait for instance to boot
-        print("[5/7] Waiting for instance to boot...")
-        if not vast.wait_for_running(instance_id, timeout=300):
-            raise RuntimeError(f"Instance {instance_id} failed to boot within 300s")
+                print("[5/7] Waiting for instance to boot...")
+                if vast.wait_for_running(instance_id, timeout=300):
+                    break
+                print(f"  Boot failed on offer {cur_offer['id']}, trying next host...")
+                vast.destroy_instance(instance_id)
+                instance_id = None
+            except RuntimeError as e:
+                print(f"  Host error: {e}")
+                if instance_id:
+                    try:
+                        vast.destroy_instance(instance_id)
+                    except Exception:
+                        pass
+                    instance_id = None
+                if attempt >= max_retries - 1:
+                    raise
+                continue
+
+        if not instance_id:
+            raise RuntimeError(f"All {max_retries} hosts failed to boot")
         print(f"  Instance {instance_id} is running")
         job_info["status"] = "running"
         job_path.write_text(json.dumps(job_info, indent=2))

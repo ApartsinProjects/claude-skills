@@ -338,19 +338,51 @@ onstart_cmd = (
     f"bash /tmp/onstart.sh"
 )
 
-instance = vast.create_instance(
-    offer_id=offer["id"],
-    docker_image=selected,
-    onstart_cmd=onstart_cmd,
-    disk_gb=15,
-)
-instance_id = instance.get("new_contract") or instance.get("instance_id")
-check("Instance created", bool(instance_id), f"id={instance_id}")
+# Launch with retry (bad hosts happen)
+instance_id = None
+booted = False
+max_retries = 3
+for attempt in range(max_retries):
+    try:
+        offer = offers[attempt] if attempt < len(offers) else offers[0]
+        print(f"  Attempt {attempt + 1}/{max_retries}: offer {offer['id']} ({offer.get('gpu_name')})")
+        instance = vast.create_instance(
+            offer_id=offer["id"],
+            docker_image=selected,
+            onstart_cmd=onstart_cmd,
+            disk_gb=15,
+        )
+        instance_id = instance.get("new_contract") or instance.get("instance_id")
+        if not instance_id:
+            print(f"  Instance creation failed, retrying...")
+            continue
 
-# ── 6. Wait for boot ──
-print(f"\n[6/10] Waiting for boot...")
-booted = vast.wait_for_running(instance_id, timeout=300)
+        print(f"\n[6/10] Waiting for boot...")
+        booted = vast.wait_for_running(instance_id, timeout=300)
+        if booted:
+            break
+        print(f"  Boot failed, destroying and retrying...")
+        vast.destroy_instance(instance_id)
+        instance_id = None
+    except RuntimeError as e:
+        print(f"  Host error: {e}")
+        if instance_id:
+            try:
+                vast.destroy_instance(instance_id)
+            except Exception:
+                pass
+            instance_id = None
+        if attempt < max_retries - 1:
+            print(f"  Retrying with different host...")
+        continue
+
+check("Instance created", bool(instance_id))
 check("Instance booted", booted)
+if not booted:
+    print("  All retries failed, cleaning up...")
+    r2.delete_bucket(bucket)
+    shutil.rmtree(data_dir, ignore_errors=True)
+    sys.exit(1)
 
 # Get SSH + TensorBoard info
 inst_info = vast.get_instance(instance_id)
