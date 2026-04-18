@@ -1,0 +1,11 @@
+_comprehensive_test_data/
+_comprehensive_test_results/
+_e2e_test/
+_e2e_results/
+_e2e_finetune_data/
+_e2e_finetune_results/
+test_data/
+test_results/
+keys/ssh/
+__pycache__/
+*.pyc

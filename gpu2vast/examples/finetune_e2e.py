@@ -211,7 +211,7 @@ onstart_cmd = " && ".join(onstart_parts)
 
 instance = vast.create_instance(
     offer_id=offer["id"],
-    docker_image="pytorch/pytorch:2.3.0-cuda12.1-cudnn9-runtime",
+    docker_image="vastai/pytorch",
     onstart_cmd=onstart_cmd,
     disk_gb=15,
 )

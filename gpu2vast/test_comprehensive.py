@@ -195,6 +195,31 @@ try:
 except Exception as e:
     check("HF model accessible", False, str(e))
 
+# 1h. Check gated HF model accessibility (requires token)
+print("\n  Checking gated model accessibility (meta-llama/Llama-3.2-1B)...")
+if hf_token:
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c",
+             f"from huggingface_hub import model_info; "
+             f"info = model_info('meta-llama/Llama-3.2-1B', token='{hf_token}'); "
+             f"print(f'Model: {{info.id}}, gated: {{info.gated}}')"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0:
+            check("Gated HF model accessible", True)
+            print(f"    {r.stdout.strip()}")
+        else:
+            err = r.stderr.strip()[:150]
+            if "401" in err or "403" in err or "gated" in err.lower():
+                check("Gated HF model accessible", False, "token lacks access to gated model")
+            else:
+                check("Gated HF model accessible", False, err)
+    except Exception as e:
+        check("Gated HF model accessible", False, str(e))
+else:
+    warn("Skipping gated model test (no HF token)")
+
 if "--skip-launch" in sys.argv:
     print("\n  --skip-launch: skipping phases 2-6")
     print(f"\n  Results: {len(passed)} passed, {len(failed)} failed, {len(warnings)} warnings")
@@ -424,7 +449,7 @@ onstart_cmd = " && ".join(onstart_parts)
 print("\n  Launching instance...")
 instance = vast.create_instance(
     offer_id=offer["id"],
-    docker_image="pytorch/pytorch:2.3.0-cuda12.1-cudnn9-runtime",
+    docker_image="vastai/pytorch",
     onstart_cmd=onstart_cmd,
     disk_gb=15,
 )
@@ -481,6 +506,17 @@ while time.time() - start < max_wait:
 
     done = r2.get_done(bucket)
     if done:
+        # Final log fetch to capture phases that arrived after last poll
+        log_output = vast.get_logs(instance_id, tail=200)
+        if log_output:
+            for line in log_output.strip().split("\n"):
+                line = line.strip()
+                if line and line not in seen_lines:
+                    seen_lines.add(line)
+                    print(f"  [{elapsed:3d}s] {line}")
+                    for marker, phase in phase_markers.items():
+                        if marker in line:
+                            seen_phases[phase] = True
         print(f"\n  Job completed: {done.get('status')} ({elapsed}s)")
         break
 
@@ -505,6 +541,18 @@ else:
 print("-" * 50)
 
 # Validate phases seen in logs
+# Also check stdout.log from R2 for phase markers (logs may be incomplete from streaming)
+print("\n  Checking stdout.log for missed phases...")
+try:
+    stdout_check = r2.s3.get_object(Bucket=bucket, Key="logs/stdout.log")
+    stdout_content = stdout_check["Body"].read().decode("utf-8", errors="replace")
+    for marker, phase in phase_markers.items():
+        if marker in stdout_content and not seen_phases[phase]:
+            seen_phases[phase] = True
+            print(f"    Found '{marker}' in stdout.log (missed in live stream)")
+except Exception:
+    pass
+
 print("\n  Validating pipeline phases observed in logs:")
 for phase, seen in seen_phases.items():
     check(f"Log phase: {phase}", seen)
@@ -595,6 +643,13 @@ try:
     check("Instance destroyed", True)
 except Exception as e:
     check("Instance destroyed", False, str(e))
+
+# Verify instance is actually gone (vast.ai takes a few seconds to process)
+print("  Verifying instance is gone...")
+time.sleep(10)
+still_alive = vast.is_instance_alive(instance_id)
+check("Instance confirmed deleted", not still_alive,
+      f"instance {instance_id} still alive" if still_alive else "")
 
 print("\n  Deleting R2 bucket...")
 try:

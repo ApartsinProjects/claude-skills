@@ -217,6 +217,10 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
     stale_count = 0
     seen_log_lines = set()
     last_log_fetch = 0
+    last_r2_check = 0
+    poll_interval = 5
+
+    print(f"  Polling every {poll_interval}s (logs + R2 progress)...")
 
     while True:
         elapsed = time.time() - start
@@ -224,53 +228,66 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
             print(f"\n  TIMEOUT after {max_hours}h")
             break
 
-        # Check done
-        done = r2.get_done(bucket)
-        if done:
-            status = done.get("status", "unknown")
-            exit_code = done.get("exit_code", "?")
-            print(f"\n  Job finished: {status} (exit_code={exit_code})")
-            if status != "success":
-                _print_final_logs(vast, instance_id, seen_log_lines)
-            return
+        now = time.time()
 
-        # Check error
-        error = r2.get_error(bucket)
-        if error:
-            print(f"\n  Job error: {error}")
-            _print_final_logs(vast, instance_id, seen_log_lines)
-            return
-
-        # Stream instance logs every 10s
-        if instance_id and time.time() - last_log_fetch >= 10:
+        # Stream instance logs every 5s (fast, non-blocking)
+        if instance_id and now - last_log_fetch >= poll_interval:
             _stream_logs(vast, instance_id, seen_log_lines, int(elapsed))
-            last_log_fetch = time.time()
+            last_log_fetch = now
 
-        # Check progress from R2
-        progress = r2.get_progress(bucket)
-        if progress:
-            step = progress.get("step", "?")
-            total = progress.get("total", "?")
-            loss = progress.get("loss", "?")
-            gpu_info = progress.get("gpu", {})
-            gpu_util = gpu_info.get("gpu_util", "?")
-            mins = elapsed / 60
+        # Check R2 every 10s (slower S3 calls)
+        if now - last_r2_check >= 10:
+            # Check done
+            done = r2.get_done(bucket)
+            if done:
+                status = done.get("status", "unknown")
+                exit_code = done.get("exit_code", "?")
+                # Final log fetch
+                _stream_logs(vast, instance_id, seen_log_lines, int(elapsed))
+                print(f"\n  Job finished: {status} (exit_code={exit_code}, {int(elapsed)}s)")
+                if status != "success":
+                    _print_final_logs(vast, instance_id, seen_log_lines)
+                return
 
-            bar_pct = int(step) / int(total) * 100 if str(step).isdigit() and str(total).isdigit() else 0
-            bar = "█" * int(bar_pct / 5) + "░" * (20 - int(bar_pct / 5))
-
-            print(f"\r  {bar} {step}/{total}  loss={loss}  GPU={gpu_util}%  {mins:.0f}min  ", end="", flush=True)
-            stale_count = 0
-        else:
-            stale_count += 1
-            stale_secs = stale_count * 10
-            if stale_count == 18:
-                print(f"\n  WARNING: No progress for {stale_secs}s")
-            elif stale_count == 30:
-                print(f"\n  No progress for {stale_secs}s, may have failed")
+            # Check error
+            error = r2.get_error(bucket)
+            if error:
+                print(f"\n  Job error: {error}")
                 _print_final_logs(vast, instance_id, seen_log_lines)
+                return
 
-        time.sleep(10)
+            # Check progress
+            progress = r2.get_progress(bucket)
+            if progress:
+                step = progress.get("step", "?")
+                total = progress.get("total", "?")
+                loss = progress.get("loss", "?")
+                gpu_info = progress.get("gpu", {})
+                gpu_util = gpu_info.get("gpu_util", "?")
+                mins = elapsed / 60
+
+                bar_pct = int(step) / int(total) * 100 if str(step).isdigit() and str(total).isdigit() else 0
+                bar = "█" * int(bar_pct / 5) + "░" * (20 - int(bar_pct / 5))
+
+                print(f"\r  {bar} {step}/{total}  loss={loss}  GPU={gpu_util}%  {mins:.0f}min  ", end="", flush=True)
+                stale_count = 0
+            else:
+                stale_count += 1
+
+            # Check if instance died
+            if stale_count > 0 and stale_count % 6 == 0:
+                alive = vast.is_instance_alive(instance_id)
+                stale_secs = stale_count * 10
+                if not alive:
+                    print(f"\n  Instance {instance_id} is no longer running ({stale_secs}s)")
+                    _print_final_logs(vast, instance_id, seen_log_lines)
+                    return
+                if stale_count >= 18:
+                    print(f"\n  WARNING: No progress for {stale_secs}s (instance still alive)")
+
+            last_r2_check = now
+
+        time.sleep(poll_interval)
 
 
 def _stream_logs(vast, instance_id, seen_lines, elapsed_s):
