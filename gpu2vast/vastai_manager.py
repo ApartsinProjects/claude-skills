@@ -76,6 +76,7 @@ def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
         "dph_total": {"lte": max_price},
         "inet_down": {"gte": 100},
         "reliability2": {"gte": 0.90},
+        "cuda_max_good": {"gte": 12.4},
     }
     try:
         results = offers_api.search_offers(client, query=query, storage=float(disk_gb),

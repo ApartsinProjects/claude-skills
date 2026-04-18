@@ -13,14 +13,19 @@ ts "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev
 ts "Installing packages..."
 T0=$SECONDS
 EXTRA_PKGS="boto3 transformers accelerate peft trl bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf"
-if ! python3 -c "import torch" 2>/dev/null; then
+if python3 -c "import torch" 2>/dev/null; then
+    ts "torch found in base image, preserving ($(python3 -c 'import torch; print(torch.__version__)'))"
+    CONSTRAINT="--constraint /tmp/torch_constraint.txt"
+    python3 -c "import torch; print(f'torch=={torch.__version__}')" > /tmp/torch_constraint.txt
+else
     EXTRA_PKGS="torch $EXTRA_PKGS"
+    CONSTRAINT=""
     ts "torch not found in base image, will install"
 fi
 if command -v uv &> /dev/null; then
     uv pip install --system $EXTRA_PKGS
 else
-    pip install $EXTRA_PKGS
+    pip install $CONSTRAINT $EXTRA_PKGS
 fi
 ts "Packages installed ($((SECONDS - T0))s)"
 
