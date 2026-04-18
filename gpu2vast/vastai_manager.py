@@ -293,18 +293,28 @@ def get_logs(instance_id: int, tail: int = 50) -> str:
         return ""
 
 
-def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
-    """Wait for instance to reach 'running' state with integrated SSH health check.
+def wait_for_running(instance_id: int, stale_timeout: int = 120) -> bool:
+    """Wait for instance to reach 'running' state with activity-based timeout.
 
-    Checks SSH immediately when status hits 'running' (SSHD starts before onstart).
-    Bails fast on broken hosts instead of waiting the full timeout.
+    Instead of a hard wall-clock timeout, keeps waiting as long as the instance
+    is making progress (status_msg changing). Only times out after stale_timeout
+    seconds of no activity. Integrated SSH health check on boot.
     """
-    print(f"  [vast] Waiting for instance {instance_id} to boot (timeout={timeout}s)...")
+    print(f"  [vast] Waiting for instance {instance_id} (stale timeout={stale_timeout}s)...")
     start = time.time()
     terminal_states = {"exited", "stopped"}
     error_count = 0
     error_grace = 3
-    while time.time() - start < timeout:
+    last_status_msg = ""
+    last_activity = time.time()
+
+    while True:
+        stale_seconds = time.time() - last_activity
+        if stale_seconds > stale_timeout:
+            elapsed = int(time.time() - start)
+            print(f"\n  [vast] No progress for {int(stale_seconds)}s, giving up ({elapsed}s total)")
+            return False
+
         try:
             info = get_instance(instance_id)
             if not isinstance(info, dict) or not info:
@@ -316,17 +326,22 @@ def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
             status = info.get("actual_status", "?")
             status_msg = info.get("status_msg", "")
             elapsed = int(time.time() - start)
+
+            # Detect activity: status or status_msg changed
+            if status_msg != last_status_msg:
+                last_activity = time.time()
+                last_status_msg = status_msg
+
             display = f"{status}"
             if status_msg:
                 display += f" [{status_msg[:60]}]"
-            print(f"\r  [vast] Status: {display} ({elapsed}s elapsed)    ", end="", flush=True)
+            print(f"\r  [vast] Status: {display} ({elapsed}s)    ", end="", flush=True)
 
             if status == "running":
                 print()
-                # Immediate SSH health check (SSHD starts before onstart)
                 time.sleep(5)
                 if ssh_health_check(instance_id, timeout=10):
-                    print(f"  [vast] SSH health check: OK")
+                    print(f"  [vast] SSH health check: OK ({elapsed}s total)")
                     return True
                 else:
                     print(f"  [vast] SSH health check: FAILED (broken host)")
@@ -357,8 +372,6 @@ def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
         except Exception:
             pass
         time.sleep(10)
-    print(f"\n  [vast] Timed out after {timeout}s")
-    return False
 
 
 def ssh_health_check(instance_id: int, timeout: int = 15) -> bool:

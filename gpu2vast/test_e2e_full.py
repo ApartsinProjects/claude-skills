@@ -358,7 +358,7 @@ for attempt in range(max_retries):
             continue
 
         print(f"\n[6/10] Waiting for boot + SSH health check...")
-        booted = vast.wait_for_running(instance_id, timeout=300)
+        booted = vast.wait_for_running(instance_id)
         if booted:
             break
         print(f"  Boot/health check failed, destroying and retrying...")
