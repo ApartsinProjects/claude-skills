@@ -117,22 +117,22 @@ s3 = boto3.client('s3',
     aws_secret_access_key=os.environ['R2_SECRET_KEY'],
     region_name='auto')
 bucket = os.environ['R2_BUCKET']
-pattern = os.environ.get('RESULTS_PATTERN', 'results/*')
 exit_code = $EXIT_CODE
 
 uploaded = {}
 total_bytes = 0
 t0 = time.time()
-for p in pattern.split(','):
-    for fp in glob.glob(p, recursive=True):
-        path = Path(fp)
-        if path.is_file():
-            key = f'results/{path.name}'
-            s3.upload_file(str(path), bucket, key)
-            size = path.stat().st_size
-            uploaded[key] = {'size': size}
-            total_bytes += size
-            print(f'  {path.name} ({size:,} bytes)')
+for fp in glob.glob('results/**/*', recursive=True):
+    path = Path(fp)
+    if path.is_file():
+        # Preserve subdirectory structure: results/model/config.json -> results/model/config.json
+        rel = str(path).replace(os.sep, '/')
+        key = rel  # keep full path from results/ onward
+        s3.upload_file(str(path), bucket, key)
+        size = path.stat().st_size
+        uploaded[key] = {'size': size}
+        total_bytes += size
+        print(f'  {rel} ({size:,} bytes)')
 
 if Path('/workspace/stdout.log').exists():
     s3.upload_file('/workspace/stdout.log', bucket, 'logs/stdout.log')

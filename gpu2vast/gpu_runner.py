@@ -436,9 +436,9 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
 
     if tb_url:
         print()
-        print(f"  ┌────────────────────────────────────────────┐")
-        print(f"  │  TensorBoard: {tb_url:<29s}│")
-        print(f"  └────────────────────────────────────────────┘")
+        print(f"  +----------------------------------------------+")
+        print(f"  |  TensorBoard: {tb_url:<29s} |")
+        print(f"  +----------------------------------------------+")
         try:
             webbrowser.open(tb_url)
             print(f"  (opened in browser)")

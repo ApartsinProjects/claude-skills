@@ -89,14 +89,15 @@ python gpu_runner.py cleanup-all
 
 ## How It Works
 
-### Pipeline (7 stages, all printed to console)
+### Pipeline (8 stages, all printed to console)
 
+0. **Local smoke test**: Compiles scripts, checks all imports locally (catches missing packages before spending money)
 1. **Create R2 bucket**: Ephemeral per-job bucket
 2. **Upload data**: Scripts + data with parallel upload and checksum verification
-3. **Search GPU**: Cost-aware scoring (price x transfer time x reliability)
+3. **Search GPU**: Cost-aware scoring (price x transfer time x reliability) + ETA estimate
 4. **Launch instance**: Auto-retry up to 3 hosts if one fails (GPU/Docker errors, SSH broken)
-5. **Wait for boot + SSH health check**: Detects broken hosts before running
-6. **Monitor**: SSH log streaming + R2 progress + TensorBoard
+5. **Wait for boot + SSH health check**: Activity-based timeout (waits as long as progress is happening), immediate SSH check on boot
+6. **Monitor**: SSH log streaming (real-time training output) + R2 progress + TensorBoard (non-blocking, background)
 7. **Download results**: Parallel download of weights, logs, TensorBoard runs
 
 ### What runs on the instance
