@@ -290,16 +290,59 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
         time.sleep(poll_interval)
 
 
+def _safe_print(text):
+    """Print text safely on Windows (handles Unicode chars in cp1252)."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "replace").decode())
+
+
 def _stream_logs(vast, instance_id, seen_lines, elapsed_s):
-    """Fetch and print new log lines from the vast.ai instance."""
+    """Fetch logs via vast.ai API + SSH (for onstart output)."""
+    # vast.ai API logs (system/daemon logs)
     log_output = vast.get_logs(instance_id, tail=50)
-    if not log_output:
-        return
-    for line in log_output.split("\n"):
-        line = line.strip()
-        if line and line not in seen_lines:
-            seen_lines.add(line)
-            print(f"  [{elapsed_s:3d}s] {line}")
+    if log_output:
+        for line in log_output.split("\n"):
+            line = line.strip()
+            if line and line not in seen_lines:
+                seen_lines.add(line)
+                _safe_print(f"  [{elapsed_s:3d}s] {line}")
+
+    # SSH-based log streaming (application output from onstart.sh)
+    ssh_output = _ssh_tail_log(vast, instance_id)
+    if ssh_output:
+        for line in ssh_output.split("\n"):
+            line = line.strip()
+            if line and line not in seen_lines:
+                seen_lines.add(line)
+                _safe_print(f"  [{elapsed_s:3d}s] [app] {line}")
+
+
+def _ssh_tail_log(vast, instance_id, lines=30):
+    """Tail the onstart log via SSH. Returns empty string on failure."""
+    import subprocess
+    info = vast.get_instance(instance_id)
+    if not isinstance(info, dict):
+        return ""
+    ssh_host = info.get("ssh_host", "")
+    ssh_port = info.get("ssh_port", "")
+    if not ssh_host or not ssh_port:
+        return ""
+    key_path = KEYS_DIR / "ssh" / "gpu2vast_ed25519"
+    if not key_path.exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no",
+             "-o", "BatchMode=yes", "-i", str(key_path),
+             "-p", str(ssh_port), f"root@{ssh_host}",
+             f"tail -{lines} /var/log/onstart.log 2>/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 def _print_final_logs(vast, instance_id, seen_lines):
@@ -315,7 +358,7 @@ def _print_final_logs(vast, instance_id, seen_lines):
         line = line.strip()
         if line and line not in seen_lines:
             seen_lines.add(line)
-            print(f"  [log] {line}")
+            _safe_print(f"  [log] {line}")
 
 
 def show_status(args):

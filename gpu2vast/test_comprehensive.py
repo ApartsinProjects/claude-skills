@@ -513,7 +513,7 @@ while time.time() - start < max_wait:
                 line = line.strip()
                 if line and line not in seen_lines:
                     seen_lines.add(line)
-                    print(f"  [{elapsed:3d}s] {line}")
+                    print(f"  [{elapsed:3d}s] {line.encode('ascii', 'replace').decode()}")
                     for marker, phase in phase_markers.items():
                         if marker in line:
                             seen_phases[phase] = True
@@ -527,7 +527,7 @@ while time.time() - start < max_wait:
                 line = line.strip()
                 if line and line not in seen_lines:
                     seen_lines.add(line)
-                    print(f"  [{elapsed:3d}s] {line}")
+                    print(f"  [{elapsed:3d}s] {line.encode('ascii', 'replace').decode()}")
 
                     for marker, phase in phase_markers.items():
                         if marker in line:
