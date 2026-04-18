@@ -1,0 +1,6 @@
+keys/
+__pycache__/
+*.pyc
+jobs/
+test_data/
+test_results/
