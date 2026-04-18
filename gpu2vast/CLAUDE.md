@@ -36,8 +36,26 @@ Rules:
 - `sys.stdout.flush()` after EVERY print (SSH tail needs unbuffered output)
 - `=== DONE ===` as completion marker
 - Save all results to `results/` directory (subdirs OK: `results/model/`, `results/logs/`)
-- Use `torch.utils.tensorboard.SummaryWriter(log_dir="runs")` for TensorBoard scalars
+- **MANDATORY**: Use `torch.utils.tensorboard.SummaryWriter(log_dir="runs")` for logging all metrics
+- **MANDATORY**: Log at minimum: `train/loss` per step, `eval/accuracy` at end, `eval/loss` at end
 - Copy TensorBoard runs to results: `shutil.copytree("runs", "results/tb_runs", dirs_exist_ok=True)`
+
+TensorBoard logging template (include in every training script):
+```python
+from torch.utils.tensorboard import SummaryWriter
+writer = SummaryWriter(log_dir="runs")
+
+# During training loop:
+writer.add_scalar("train/loss", loss, step)
+writer.add_scalar("train/lr", lr, step)
+
+# After evaluation:
+writer.add_scalar("eval/loss", eval_loss, step)
+writer.add_scalar("eval/accuracy", accuracy, step)
+
+writer.flush()
+writer.close()
+```
 
 ## Dependencies
 

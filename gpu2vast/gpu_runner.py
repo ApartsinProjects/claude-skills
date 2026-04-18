@@ -361,6 +361,22 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
                 print(f"  Fix: pip install {module}")
                 return False
 
+    # Check that training scripts use TensorBoard
+    for py_file in py_files:
+        code = Path(py_file).read_text(errors="replace")
+        if "SummaryWriter" in code or "tensorboard" in code.lower():
+            print(f"  {Path(py_file).name}: TensorBoard logging: OK")
+        elif "train" in Path(py_file).name.lower():
+            print(f"  WARNING: {Path(py_file).name} does not use TensorBoard (SummaryWriter)")
+            print(f"  Add: from torch.utils.tensorboard import SummaryWriter")
+
+    # Check for flush
+    for py_file in py_files:
+        code = Path(py_file).read_text(errors="replace")
+        if "print(" in code and "flush" not in code and "train" in Path(py_file).name.lower():
+            print(f"  WARNING: {Path(py_file).name} has print() without sys.stdout.flush()")
+            print(f"  SSH log streaming won't show output in real-time")
+
     return True
 
 
