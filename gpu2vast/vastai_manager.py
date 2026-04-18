@@ -175,22 +175,10 @@ def select_image(script_path: str = None, requirements: list[str] = None) -> str
         except Exception:
             pass
 
-    # Score each image by how many needed packages it already has
+    # Always use vastai/pytorch (pre-cached on hosts, boots in 60-90s).
+    # The HF image (15GB) takes 5+ min to pull and causes boot timeouts.
+    # Missing packages are installed via pip in onstart.sh (idempotent).
     best_image = "vastai/pytorch"
-    best_score = 0
-
-    for name, info in DOCKER_IMAGES.items():
-        provided = set(info["packages"])
-        overlap = len(needed & provided)
-        if overlap > best_score:
-            best_score = overlap
-            best_image = info["image"]
-
-    # Default to HF image when any transformers/training package is detected
-    hf_packages = {"transformers", "accelerate", "peft", "trl", "datasets",
-                   "sentence-transformers", "bitsandbytes", "tensorboard"}
-    if needed & hf_packages:
-        best_image = DOCKER_IMAGES["transformers"]["image"]
 
     print(f"  [vast] Selected image: {best_image} (needed: {', '.join(sorted(needed)) or 'base only'})")
     return best_image
