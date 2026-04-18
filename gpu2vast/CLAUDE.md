@@ -38,6 +38,8 @@ Rules:
 - Save all results to `results/` directory (subdirs OK: `results/model/`, `results/logs/`)
 - **MANDATORY**: Use `torch.utils.tensorboard.SummaryWriter(log_dir="runs")` for logging all metrics
 - **MANDATORY**: Log at minimum: `train/loss` per step, `eval/accuracy` at end, `eval/loss` at end
+- **MANDATORY**: Use `writer.add_text("phase", ...)` to log each phase transition (see template below)
+- **MANDATORY**: Call `writer.flush()` after the first `add_text` call so TensorBoard has data immediately on open
 - Copy TensorBoard runs to results: `shutil.copytree("runs", "results/tb_runs", dirs_exist_ok=True)`
 
 TensorBoard logging template (include in every training script):
@@ -45,17 +47,51 @@ TensorBoard logging template (include in every training script):
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter(log_dir="runs")
 
-# During training loop:
-writer.add_scalar("train/loss", loss, step)
-writer.add_scalar("train/lr", lr, step)
+# Phase markers via add_text (tag="phase", use global_step for ordering)
+# Create the writer BEFORE any work, log phases as they happen:
+writer.add_text("phase", "model_download: loading distilbert-base-uncased", 0)
+writer.flush()  # flush early so TensorBoard shows data on first open
+# ... load model ...
+writer.add_text("phase", f"model_loaded: distilbert-base-uncased on {device}", 0)
 
-# After evaluation:
-writer.add_scalar("eval/loss", eval_loss, step)
-writer.add_scalar("eval/accuracy", accuracy, step)
+writer.add_text("phase", "data_loading: tokenizing training texts", 0)
+# ... load/tokenize data ...
+writer.add_text("phase", f"data_loaded: {len(dataset)} samples tokenized", 0)
 
+writer.add_text("phase", f"training_start: {total_steps} steps, {epochs} epochs, lr={lr}", 0)
 writer.flush()
+
+# Per-epoch markers:
+for epoch in range(1, epochs + 1):
+    writer.add_text("phase", f"epoch_start: epoch {epoch}/{epochs}", epoch)
+    # Training loop:
+    writer.add_scalar("train/loss", loss, step)
+    writer.add_scalar("train/lr", lr, step)
+    writer.add_text("phase", f"epoch_end: epoch {epoch}, avg_loss={avg_loss:.4f}", epoch)
+
+writer.add_text("phase", f"training_complete: {elapsed:.1f}s", epochs)
+
+# Evaluation:
+writer.add_text("phase", "eval_start: computing metrics", epochs)
+writer.add_scalar("eval/loss", eval_loss, epochs)
+writer.add_scalar("eval/accuracy", accuracy, epochs)
+writer.add_text("phase", f"eval_complete: loss={eval_loss:.4f}, acc={accuracy:.4f}", epochs)
+
+# Saving:
+writer.add_text("phase", "saving_results: model + summary to results/", epochs)
+# ... save ...
+writer.add_text("phase", f"done: saved, {elapsed:.1f}s total, perplexity={ppl:.2f}", epochs)
 writer.close()
 ```
+
+Required `add_text("phase", ...)` entries (minimum set for every training script):
+- `model_download` / `model_loaded`
+- `data_loading` / `data_loaded`
+- `training_start`
+- `epoch_start` / `epoch_end` (per epoch)
+- `training_complete`
+- `eval_start` / `eval_complete`
+- `saving_results` / `done`
 
 ## Dependencies
 
