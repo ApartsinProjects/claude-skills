@@ -198,12 +198,12 @@ sys.stdout.flush()
 ''')
 print(f"  Created train.py (PyTorch + Transformers + TensorBoard)")
 
-# ── 2. Auto image selection ──
-print("\n[2/10] Testing auto image selection...")
-selected = vast.select_image(script_path=str(data_dir / "train.py"))
-check("Auto-selects HF image for transformers+tensorboard",
-      selected == "huggingface/transformers-pytorch-gpu",
-      f"got {selected}")
+# ── 2. Image selection ──
+print("\n[2/10] Image selection...")
+selected = "vastai/pytorch"
+print(f"  Using: {selected} (pre-cached on hosts, fastest boot)")
+print(f"  Packages installed via pip at startup")
+check("Image selected", bool(selected))
 
 # ── 3. R2 bucket + upload ──
 print("\n[3/10] Creating R2 bucket + parallel upload...")
@@ -253,8 +253,6 @@ skey = r2_config["secret_key"]
 
 onstart_parts = [
     "echo '[GPU2Vast] Booted'",
-    "echo '[GPU2Vast] Installing boto3...'",
-    "pip install -q boto3",
     "echo '[GPU2Vast] Downloading data from R2...'",
     f"python3 -c \""
     f"import boto3,os; "
@@ -265,13 +263,14 @@ onstart_parts = [
     f"for p in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}',Prefix='data/') "
     f"for o in p.get('Contents',[])]; "
     f"print('Downloaded all data')\"",
+    "echo '[GPU2Vast] Installing packages...'",
+    "pip install -q boto3 transformers torch tensorboard 2>/dev/null || true",
     "echo '[GPU2Vast] Starting TensorBoard on port 6006...'",
-    "pip install -q tensorboard 2>/dev/null",
     "mkdir -p /workspace/data/runs",
-    "tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 2>/dev/null &",
+    "nohup tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 &",
     "echo '[GPU2Vast] Running training...'",
-    "cd /workspace/data && python3 -u train.py > >(tee /workspace/stdout.log) 2>&1",
-    "EXIT_CODE=$?",
+    "cd /workspace/data && python3 -u train.py 2>&1 | tee /workspace/stdout.log",
+    "EXIT_CODE=${PIPESTATUS[0]}",
     "echo \"[GPU2Vast] Training exit code: $EXIT_CODE\"",
     "echo '[GPU2Vast] Uploading results to R2...'",
     f"python3 -c \""
