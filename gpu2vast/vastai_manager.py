@@ -121,22 +121,18 @@ DOCKER_IMAGES = {
     "pytorch": {
         "image": "vastai/pytorch",
         "packages": ["torch", "torchvision"],
-        "description": "Pre-cached PyTorch (fastest boot)",
+        "description": "Pre-cached PyTorch (fastest boot, no transformers)",
     },
     "transformers": {
         "image": "huggingface/transformers-pytorch-gpu",
-        "packages": ["torch", "transformers", "accelerate", "datasets", "tokenizers"],
-        "description": "HuggingFace Transformers + PyTorch",
+        "packages": ["torch", "transformers", "accelerate", "datasets", "tokenizers",
+                     "peft", "trl", "tensorboard"],
+        "description": "HuggingFace Transformers + PyTorch + TensorBoard (recommended)",
     },
     "full-ml": {
         "image": "nvcr.io/nvidia/pytorch:24.01-py3",
-        "packages": ["torch", "torchvision", "numpy", "scipy", "pandas"],
+        "packages": ["torch", "torchvision", "numpy", "scipy", "pandas", "tensorboard"],
         "description": "NVIDIA NGC full ML stack",
-    },
-    "tensorflow": {
-        "image": "tensorflow/tensorflow:2.16.1-gpu",
-        "packages": ["tensorflow", "keras", "numpy", "scipy", "pandas"],
-        "description": "TensorFlow + GPU support",
     },
     "cuda": {
         "image": "nvidia/cuda:12.1.0-runtime-ubuntu22.04",
@@ -167,8 +163,11 @@ def select_image(script_path: str = None, requirements: list[str] = None) -> str
                 "sentence_transformers": "sentence-transformers",
                 "bitsandbytes": "bitsandbytes",
                 "torch": "torch",
-                "tensorflow": "tensorflow",
-                "jax": "jax",
+                "SummaryWriter": "tensorboard",
+                "tensorboard": "tensorboard",
+                "huggingface_hub": "transformers",
+                "evaluate": "transformers",
+                "safetensors": "transformers",
             }
             for pattern, pkg in import_map.items():
                 if pattern in content:
@@ -187,12 +186,11 @@ def select_image(script_path: str = None, requirements: list[str] = None) -> str
             best_score = overlap
             best_image = info["image"]
 
-    # Framework-specific overrides
-    hf_packages = {"transformers", "accelerate", "peft", "trl", "datasets", "sentence-transformers"}
+    # Default to HF image when any transformers/training package is detected
+    hf_packages = {"transformers", "accelerate", "peft", "trl", "datasets",
+                   "sentence-transformers", "bitsandbytes", "tensorboard"}
     if needed & hf_packages:
         best_image = DOCKER_IMAGES["transformers"]["image"]
-    elif "tensorflow" in needed or "keras" in needed:
-        best_image = DOCKER_IMAGES["tensorflow"]["image"]
 
     print(f"  [vast] Selected image: {best_image} (needed: {', '.join(sorted(needed)) or 'base only'})")
     return best_image
