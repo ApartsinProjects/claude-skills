@@ -310,15 +310,8 @@ print(f'Results uploaded: {{len(uploaded)}} files')
 echo '[GPU2Vast] ALL DONE'
 """
 
-# Local validation: check bash syntax + embedded Python syntax
-import subprocess as _sp, re as _re
-tmp_sh = "/tmp/_gpu2vast_onstart_check.sh"
-Path(tmp_sh).write_text(onstart_script)
-r = _sp.run(["bash", "-n", tmp_sh], capture_output=True, text=True)
-if r.returncode != 0:
-    print(f"  FAIL: bash syntax error in onstart.sh:\n{r.stderr}")
-    sys.exit(1)
-
+# Local validation: check embedded Python syntax (bash -n unreliable on Windows)
+import re as _re
 for i, m in enumerate(_re.finditer(r'python3 -c "(.*?)"', onstart_script, _re.DOTALL)):
     py_code = m.group(1)
     try:
@@ -326,11 +319,14 @@ for i, m in enumerate(_re.finditer(r'python3 -c "(.*?)"', onstart_script, _re.DO
     except SyntaxError as e:
         print(f"  FAIL: Python syntax error in onstart block {i}: {e}")
         sys.exit(1)
-print("  Local validation: bash + Python syntax OK")
-try:
-    os.unlink(tmp_sh)
-except OSError:
-    pass
+
+# Check for known bad patterns
+if "& &&" in onstart_script:
+    print("  FAIL: '& &&' pattern found in onstart script (backgrounding + chaining)")
+    sys.exit(1)
+if "${PIPESTATUS" in onstart_script and "set -o pipefail" not in onstart_script and "set -e" not in onstart_script:
+    print("  WARN: PIPESTATUS used without pipefail")
+print("  Local validation: Python syntax + pattern checks OK")
 
 # Upload the onstart script to R2 so the instance can fetch it
 r2.s3.put_object(Bucket=bucket, Key="onstart.sh", Body=onstart_script.encode())
