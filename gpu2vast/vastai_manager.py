@@ -133,6 +133,11 @@ DOCKER_IMAGES = {
         "packages": ["torch", "torchvision", "numpy", "scipy", "pandas"],
         "description": "NVIDIA NGC full ML stack",
     },
+    "tensorflow": {
+        "image": "tensorflow/tensorflow:2.16.1-gpu",
+        "packages": ["tensorflow", "keras", "numpy", "scipy", "pandas"],
+        "description": "TensorFlow + GPU support",
+    },
     "cuda": {
         "image": "nvidia/cuda:12.1.0-runtime-ubuntu22.04",
         "packages": [],
@@ -182,10 +187,12 @@ def select_image(script_path: str = None, requirements: list[str] = None) -> str
             best_score = overlap
             best_image = info["image"]
 
-    # If transformers/peft/trl needed, use HF image
+    # Framework-specific overrides
     hf_packages = {"transformers", "accelerate", "peft", "trl", "datasets", "sentence-transformers"}
     if needed & hf_packages:
         best_image = DOCKER_IMAGES["transformers"]["image"]
+    elif "tensorflow" in needed or "keras" in needed:
+        best_image = DOCKER_IMAGES["tensorflow"]["image"]
 
     print(f"  [vast] Selected image: {best_image} (needed: {', '.join(sorted(needed)) or 'base only'})")
     return best_image
