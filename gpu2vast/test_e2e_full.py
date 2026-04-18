@@ -271,7 +271,7 @@ for page in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}', Pref
     for obj in page.get('Contents', []):
         key = obj['Key']
         s3.download_file('{bucket}', key, '/workspace/data/' + key.split('/')[-1])
-        print(f'  Downloaded: {{key}} ({{obj[\"Size\"]}} bytes)')
+        print('  Downloaded: ' + key + ' (' + str(obj['Size']) + ' bytes)')
 "
 
 echo '[GPU2Vast] Starting TensorBoard...'
