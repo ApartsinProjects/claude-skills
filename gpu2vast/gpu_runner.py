@@ -270,6 +270,10 @@ def run_experiment(args):
         print(f"\n{'='*60}")
         print(f"  COMPLETE: {job_id}")
         print(f"  Results: {args.local_results}")
+        if args.keep_alive and instance_id:
+            print(f"  Instance kept alive: {instance_id}")
+            print(f"  Rerun:   python gpu_runner.py rerun --instance-id {instance_id} --script '...' --data ...")
+            print(f"  Destroy: python gpu_runner.py cleanup --job-id {job_id}")
         print(f"{'='*60}")
 
     except KeyboardInterrupt:
@@ -286,7 +290,8 @@ def run_experiment(args):
         job_path.write_text(json.dumps(job_info, indent=2))
 
     finally:
-        _cleanup(vast, r2, instance_id, bucket, job_info, job_path)
+        _cleanup(vast, r2, instance_id, bucket, job_info, job_path,
+                 keep_instance=getattr(args, 'keep_alive', False))
 
 
 def _setup_tensorboard(vast, instance_id, timeout=120):
@@ -376,16 +381,18 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
     return tb_url
 
 
-def _cleanup(vast, r2, instance_id, bucket, job_info, job_path):
-    """Always destroy instance and delete bucket, regardless of outcome."""
+def _cleanup(vast, r2, instance_id, bucket, job_info, job_path, keep_instance=False):
+    """Destroy instance and delete bucket. Optionally keep instance for reuse."""
     if job_info.get("status") == "detached":
         return
     print("\n  Cleaning up...")
-    if instance_id:
+    if instance_id and not keep_instance:
         try:
             vast.destroy_instance(instance_id)
         except Exception as e:
             print(f"  [cleanup] Instance destroy failed: {e}")
+    elif keep_instance and instance_id:
+        print(f"  Instance {instance_id} kept alive (--keep-alive)")
     if bucket and r2:
         try:
             r2.delete_bucket(bucket)
@@ -669,6 +676,121 @@ def cleanup_job(args):
         print(f"Job not found: {args.job_id}")
 
 
+def rerun_experiment(args):
+    """Run a new experiment on an existing instance (skips boot, pip install cached)."""
+    from r2_manager import R2Manager
+    import vastai_manager as vast
+    import subprocess as sp
+
+    config = load_config()
+    instance_id = int(args.instance_id)
+    job_id = generate_job_id(args.name or "rerun")
+
+    print(f"\n{'='*60}")
+    print(f"  GPU2Vast RERUN: {job_id}")
+    print(f"  Instance: {instance_id} (reusing)")
+    print(f"  Script: {args.script}")
+    print(f"{'='*60}\n")
+
+    # Verify instance is alive
+    if not vast.is_instance_alive(instance_id):
+        print(f"  ERROR: Instance {instance_id} is not running")
+        return
+
+    conn = vast.get_connection_info(instance_id)
+    ssh_host = conn.get("ssh_host", "")
+    ssh_port = conn.get("ssh_port", "")
+    key_path = KEYS_DIR / "ssh" / "gpu2vast_ed25519"
+
+    if not ssh_host or not key_path.exists():
+        print(f"  ERROR: Cannot SSH to instance (host={ssh_host}, key={key_path.exists()})")
+        return
+
+    r2 = R2Manager(config["r2"])
+    bucket = r2.create_bucket(job_id)
+
+    try:
+        # Upload new data
+        print("[1/4] Uploading new data...")
+        r2.upload_files(bucket, args.data)
+        print("  Upload complete")
+
+        # Copy data to instance via SSH + R2
+        print("[2/4] Downloading data to instance...")
+        r2_endpoint = f"https://{config['r2']['account_id']}.r2.cloudflarestorage.com"
+        download_cmd = (
+            f"python3 -c \""
+            f"import boto3,os; "
+            f"s3=boto3.client('s3',endpoint_url='{r2_endpoint}',"
+            f"aws_access_key_id='{config['r2']['access_key']}',"
+            f"aws_secret_access_key='{config['r2']['secret_key']}',"
+            f"region_name='auto'); "
+            f"os.makedirs('/workspace/data',exist_ok=True); "
+            f"[s3.download_file('{bucket}',o['Key'],'/workspace/data/'+o['Key'].split('/')[-1]) "
+            f"for p in s3.get_paginator('list_objects_v2').paginate(Bucket='{bucket}',Prefix='data/') "
+            f"for o in p.get('Contents',[])]; "
+            f"print('Downloaded')\""
+        )
+        result = sp.run(
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+             "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
+             download_cmd],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            print(f"  ERROR: Data download failed: {result.stderr[:200]}")
+            r2.delete_bucket(bucket)
+            return
+        print(f"  Data ready on instance")
+
+        # Run the script via SSH
+        print(f"[3/4] Running: {args.script}")
+        run_cmd = (
+            f"cd /workspace/data && "
+            f"rm -rf results/ runs/ 2>/dev/null; "
+            f"mkdir -p runs && "
+            f"nohup tensorboard --logdir=runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 & "
+            f"{args.script} 2>&1 | tee /workspace/stdout.log; "
+            f"EXIT_CODE=$?; "
+            f"python3 -c \""
+            f"import boto3,json,glob,time; from pathlib import Path; "
+            f"s3=boto3.client('s3',endpoint_url='{r2_endpoint}',"
+            f"aws_access_key_id='{config['r2']['access_key']}',"
+            f"aws_secret_access_key='{config['r2']['secret_key']}',"
+            f"region_name='auto'); "
+            f"[s3.upload_file(fp,'{bucket}','results/'+Path(fp).name) "
+            f"for fp in glob.glob('results/**/*',recursive=True) if Path(fp).is_file()]; "
+            f"s3.upload_file('/workspace/stdout.log','{bucket}','logs/stdout.log'); "
+            f"s3.put_object(Bucket='{bucket}',Key='done.json',"
+            f"Body=json.dumps({{'status':'success','ts':time.time()}})); "
+            f"print('Uploaded')\""
+        )
+
+        # Stream output via SSH (blocking, shows real-time output)
+        proc = sp.Popen(
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+             "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
+             run_cmd],
+            stdout=sp.PIPE, stderr=sp.STDOUT, text=True,
+        )
+        for line in proc.stdout:
+            _safe_print(f"  [run] {line.rstrip()}")
+        proc.wait()
+
+        # Download results
+        print(f"\n[4/4] Downloading results...")
+        downloaded = r2.download_results(bucket, args.local_results)
+        print(f"  Downloaded {len(downloaded)} files to {args.local_results}")
+
+        print(f"\n{'='*60}")
+        print(f"  RERUN COMPLETE: {job_id}")
+        print(f"  Instance {instance_id} still alive (use cleanup to destroy)")
+        print(f"{'='*60}")
+
+    finally:
+        r2.delete_bucket(bucket)
+
+
 def cleanup_all(args):
     """Clean all orphaned R2 buckets and vast.ai instances."""
     from r2_manager import R2Manager
@@ -707,9 +829,20 @@ def main():
                         help="Docker image ('auto' selects based on script imports)")
     run_p.add_argument("--spot", action="store_true",
                         help="Use spot/interruptible instances (50-70%% cheaper)")
+    run_p.add_argument("--keep-alive", action="store_true",
+                        help="Keep instance alive after job (for rerun)")
     run_p.add_argument("--results-pattern", default="results/*")
     run_p.add_argument("--local-results", default="./results/")
     run_p.set_defaults(func=run_experiment)
+
+    # rerun
+    rerun_p = sub.add_parser("rerun", help="Run new experiment on existing instance")
+    rerun_p.add_argument("--instance-id", required=True, help="Instance ID from previous --keep-alive run")
+    rerun_p.add_argument("--script", required=True, help="Command to run")
+    rerun_p.add_argument("--data", nargs="+", required=True, help="Files to upload")
+    rerun_p.add_argument("--name", default="rerun", help="Job name")
+    rerun_p.add_argument("--local-results", default="./results/")
+    rerun_p.set_defaults(func=rerun_experiment)
 
     # status
     status_p = sub.add_parser("status", help="Show all jobs")

@@ -44,6 +44,8 @@ After setup: `ssh -p <port> root@<host>.vast.ai`
 | Command | Description |
 |---------|-------------|
 | `run` | Run experiment on vast.ai |
+| `run --keep-alive` | Run and keep instance alive for reuse |
+| `rerun --instance-id ID` | Run new experiment on existing instance (skips boot) |
 | `status` | Check all jobs |
 | `recover --job-id ID` | Reconnect to detached job |
 | `cleanup --job-id ID` | Force cleanup a job |
@@ -51,15 +53,38 @@ After setup: `ssh -p <port> root@<host>.vast.ai`
 
 ## CLI Options
 
+### `run`
 ```
 --script       Command to run on the instance
 --data         Files to upload (scripts, data, configs)
 --gpu          GPU type (RTX_4090, A100, etc.)
 --max-price    Max $/hr (default: 0.50)
 --spot         Use spot instances (50-70% cheaper, interruptible)
---image        Docker image ("auto" selects based on imports, default: vastai/pytorch)
+--image        Docker image (default: vastai/pytorch, pre-cached)
+--keep-alive   Keep instance alive after job (for sequential experiments)
 --max-hours    Max runtime before timeout (default: 2)
 --disk         Disk GB (default: 30)
+```
+
+### `rerun` (reuse existing instance)
+```
+--instance-id  Instance ID from previous --keep-alive run
+--script       Command to run
+--data         New files to upload
+```
+
+### Multi-run workflow
+```bash
+# First run: boot instance, keep alive
+python gpu_runner.py run --script "python train.py --lr 0.001" \
+  --data train.py data.json --keep-alive
+
+# Rerun on same instance (no boot, packages cached)
+python gpu_runner.py rerun --instance-id 12345678 \
+  --script "python train.py --lr 0.0001" --data train.py data.json
+
+# Clean up when done
+python gpu_runner.py cleanup-all
 ```
 
 ## How It Works
