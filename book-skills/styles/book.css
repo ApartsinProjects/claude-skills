@@ -1,0 +1,2790 @@
+/* ============================================================
+   BOOK TEMPLATE STYLESHEET
+   ============================================================
+
+   Purpose:
+     Starting-point stylesheet for new book projects. This file
+     is a complete, working copy of the production book.css used
+     in the LLM Course. Clone it into your project's styles/
+     directory, adjust the :root custom properties to match your
+     brand, and update icon paths as needed.
+
+   How to use:
+     1. Copy this file to <your-project>/styles/book.css
+     2. Edit the :root block below to set your color palette
+     3. Place callout icon PNGs/SVGs in a sibling icons/ folder
+        (or update the url() paths in the "Callout icons" section)
+     4. Link from every HTML page:
+        <link rel="stylesheet" href="../styles/book.css">
+
+   Section index (search for "SECTION:" to jump):
+     SECTION: Custom Properties (:root)
+     SECTION: Reset
+     SECTION: Base Typography
+     SECTION: Headings
+     SECTION: Content Layout
+     SECTION: Chapter Header & Navigation Bar
+     SECTION: Epigraph
+     SECTION: Wisdom Council Agent Cards
+     SECTION: Prerequisites
+     SECTION: Learning Objectives
+     SECTION: Chapter Overview
+     SECTION: Chapter Cards (part-level index pages)
+     SECTION: Section Cards (chapter-level index pages)
+     SECTION: Course Cards (syllabi/pathways grids)
+     SECTION: Syllabus Table
+     SECTION: Agent Cards (compact)
+     SECTION: Chapter Navigation (bottom nav bar)
+     SECTION: Callout Boxes (all types)
+     SECTION: Code Blocks & Output
+     SECTION: Diagrams & Illustrations
+     SECTION: Comparison Tables
+     SECTION: Bibliography
+     SECTION: Cross-References & Glossary
+     SECTION: Part Overview & Section Break
+     SECTION: What's Next Box
+     SECTION: Heading Resets Inside Boxes
+     SECTION: Generic Tables
+     SECTION: Quiz / Check Your Understanding
+     SECTION: Key Takeaways
+     SECTION: Labs
+     SECTION: Math (KaTeX)
+     SECTION: Syntax Highlighting Tokens
+     SECTION: Module Index Page Overrides
+     SECTION: Responsive: Tablet (1024px)
+     SECTION: Responsive: iPad Mini (768px)
+     SECTION: Responsive: Mobile (480px)
+     SECTION: Print
+     SECTION: Nav Footer (legacy)
+     SECTION: Level Badges & Exercise-Type Badges
+     SECTION: Book Index Page (index.html)
+     SECTION: Standalone .container
+     SECTION: Page Footer
+     SECTION: Front Matter Cards (pathways, intro sections)
+
+   Origin: agents/book-skills/templates/book-template.css
+   Source: styles/book.css (production)
+
+   ============================================================ */
+
+/* SECTION: Custom Properties (:root)
+   ============================================================ */
+
+/* ----- :root variables ----- */
+:root {
+    --primary: #1a1a2e;
+    --accent: #0f3460;
+    --highlight: #e94560;
+    --bg: #fafafa;
+    --text: #2d3436;
+    --text-light: #555;
+    --code-bg: #1e1e2e;
+    --code-text: #cdd6f4;
+}
+
+/* SECTION: Reset
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* SECTION: Base Typography
+   ============================================================ */
+body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.85;
+    font-size: 17px;
+    -webkit-hyphens: auto;
+    hyphens: auto;
+}
+
+p {
+    margin-bottom: 1.2rem;
+    text-align: justify;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--highlight); }
+
+/* Visible link cues inside content areas: color + underline for discoverability */
+.content a:not(.section-card):not(.toc-link):not(.book-title-link):not(.toc-part-header):not(.toc-ch) {
+    color: #1a6fb5;
+    text-decoration: underline;
+    text-decoration-color: rgba(26, 111, 181, 0.4);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1.5px;
+    transition: text-decoration-color 0.2s, color 0.2s;
+}
+.content a:not(.section-card):not(.toc-link):not(.book-title-link):not(.toc-part-header):not(.toc-ch):hover {
+    color: var(--highlight);
+    text-decoration-color: var(--highlight);
+    text-decoration-thickness: 2px;
+}
+/* Nav links inside chapter-nav should not be underlined */
+.chapter-nav a { text-decoration: none !important; }
+
+ul, ol { margin: 0.5rem 0 1.2rem 1.5rem; }
+li { margin-bottom: 0.4rem; }
+
+/* SECTION: Headings
+   ============================================================ */
+h2 {
+    font-size: 1.8rem;
+    color: var(--primary);
+    margin: 3rem 0 1.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 3px solid var(--highlight);
+    line-height: 1.3;
+}
+h3 {
+    font-size: 1.35rem;
+    color: var(--accent);
+    margin: 2rem 0 1rem;
+    line-height: 1.3;
+}
+h4 {
+    font-size: 1.1rem;
+    color: var(--primary);
+    margin: 1.5rem 0 0.75rem;
+}
+
+/* SECTION: Content Layout
+   ============================================================ */
+.content {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 3rem 2rem;
+}
+
+/* SECTION: Chapter Header & Navigation Bar
+   ============================================================ */
+.chapter-header {
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white;
+    padding: 0 2rem 2rem;
+    text-align: center;
+}
+.chapter-header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    line-height: 1.2;
+}
+
+/* Header navigation bar: book title (left) + ToC icon (right) */
+.header-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.5rem;
+    margin: 0 -0.5rem 0.8rem;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.03em;
+}
+.header-nav .book-title-link {
+    color: rgba(255,255,255,0.65);
+    text-decoration: none;
+    transition: color 0.2s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 70%;
+}
+.header-nav .book-title-link:hover { color: rgba(255,255,255,0.95); }
+.header-nav .toc-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: rgba(255,255,255,0.6);
+    text-decoration: none;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+.header-nav .toc-link:hover {
+    color: rgba(255,255,255,0.95);
+    border-color: rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.08);
+}
+.header-nav .toc-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+/* Header hierarchy: Part (top) > Module (middle) > Section title (bottom) */
+.part-label {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.88rem;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.15rem;
+}
+.part-label a {
+    color: rgba(255,255,255,0.85);
+    text-decoration: none;
+}
+.part-label a:hover { opacity: 0.9; }
+
+.chapter-label {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 0.3rem;
+}
+.chapter-label a {
+    color: rgba(255,255,255,0.7);
+    text-decoration: none;
+}
+.chapter-label a:hover { opacity: 0.9; }
+
+/* Part/chapter subtitle (description text below h1 in header) */
+.chapter-header .subtitle,
+.chapter-header .chapter-subtitle {
+    font-size: 1.1rem;
+    opacity: 0.85;
+    max-width: 650px;
+    margin: 0.5rem auto 0;
+    font-style: italic;
+    text-align: center;
+    line-height: 1.5;
+}
+
+/* SECTION: Epigraph
+   ============================================================ */
+.epigraph {
+    max-width: 100%;
+    margin: 2rem 0 2.5rem;
+    padding: 1.2rem 1.5rem;
+    border-left: 4px solid var(--highlight);
+    background: linear-gradient(135deg, rgba(233,69,96,0.04), rgba(15,52,96,0.04));
+    border-radius: 0 8px 8px 0;
+    font-style: italic;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    color: var(--text);
+}
+.epigraph p { margin: 0 0 0.5rem 0; }
+.epigraph cite {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    font-style: normal;
+    font-size: 0.9rem;
+    color: var(--highlight);
+    font-weight: 600;
+    text-align: right;
+}
+.epigraph cite::before { content: "\2014\00a0"; }
+.epigraph cite .agent-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid var(--highlight);
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+.epigraph cite .agent-avatar-inline {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+    color: white;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-style: normal;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.epigraph cite .agent-avatar-inline img,
+.agent-avatar-large img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
+.epigraph cite a {
+    color: var(--highlight);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(233,69,96,0.3);
+}
+.epigraph cite a:hover {
+    border-bottom-style: solid;
+    border-bottom-color: var(--highlight);
+}
+.epigraph cite .agent-desc {
+    font-weight: 400;
+    font-size: 0.82rem;
+    color: var(--text-light);
+}
+
+/* SECTION: Wisdom Council Agent Cards
+   ============================================================ */
+.wisdom-council-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.2rem;
+    margin: 2rem 0;
+}
+.agent-card {
+    border: 1px solid #d8dce6;
+    border-radius: 10px;
+    padding: 1.2rem;
+    background: #fff;
+    transition: box-shadow 0.2s, transform 0.15s;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.agent-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    transform: translateY(-2px);
+}
+.agent-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+.agent-card-avatar {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: 3px solid var(--highlight);
+    flex-shrink: 0;
+}
+.agent-card-name {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 0;
+    line-height: 1.2;
+}
+.agent-card-title {
+    font-size: 0.82rem;
+    color: var(--highlight);
+    font-weight: 600;
+    font-style: italic;
+}
+.agent-card-tagline {
+    font-size: 0.88rem;
+    color: var(--text);
+    line-height: 1.5;
+    margin: 0.3rem 0;
+}
+.agent-card-meta {
+    font-size: 0.78rem;
+    color: var(--text-light);
+    line-height: 1.4;
+}
+.agent-card-meta strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+/* SECTION: Prerequisites
+   ============================================================ */
+.prereqs,
+.prerequisites {
+    margin: 1.5rem 0 2rem;
+    padding: 1.2rem 1.5rem;
+    background: linear-gradient(135deg, rgba(15,52,96,0.04), rgba(233,69,96,0.02));
+    border: 1px solid rgba(15,52,96,0.12);
+    border-left: 5px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.95rem;
+    line-height: 1.6;
+}
+.prereqs h3,
+.prerequisites h3 { font-size: 1.1rem; margin-bottom: 0.5rem; position: relative; }
+.prereqs h3::before,
+.prerequisites h3::before {
+    content: '';
+    display: inline-block;
+    width: 1.2em; height: 1.2em;
+    margin-right: 0.4em;
+    vertical-align: middle;
+    background: url('icons/callout-prereqs.png') center/contain no-repeat;
+    cursor: help;
+}
+.prereqs h3::after,
+.prerequisites h3::after {
+    content: "Knowledge and skills you should have before starting this chapter.";
+    position: absolute; left: 0; top: 100%; z-index: 10;
+    background: #333; color: white; padding: 6px 12px;
+    border-radius: 4px; font-size: 0.75rem; font-weight: 400;
+    max-width: 320px; white-space: normal;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+}
+.prereqs h3:hover::after,
+.prerequisites h3:hover::after { opacity: 1; }
+.prereqs a,
+.prerequisites a {
+    color: var(--highlight);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--highlight);
+}
+.prereqs a:hover,
+.prerequisites a:hover { border-bottom-style: solid; }
+
+/* SECTION: Learning Objectives
+   ============================================================ */
+.objectives {
+    margin: 1.5rem 0 2rem;
+    padding: 1.4rem 1.8rem;
+    background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+    border: 1px solid rgba(67,160,71,0.18);
+    border-left: 5px solid #43a047;
+    border-radius: 0 8px 8px 0;
+    font-size: 0.95rem;
+    line-height: 1.65;
+}
+.objectives h3 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #2e7d32;
+    margin: 0 0 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: relative;
+}
+.objectives h3::before {
+    content: '';
+    display: inline-block;
+    width: 1.2em; height: 1.2em;
+    margin-right: 0.4em;
+    vertical-align: middle;
+    background: url('icons/callout-objectives.png') center/contain no-repeat;
+    cursor: help;
+}
+.objectives h3::after {
+    content: "What you will be able to do after completing this chapter or section.";
+    position: absolute; left: 0; top: 100%; z-index: 10;
+    background: #333; color: white; padding: 6px 12px;
+    border-radius: 4px; font-size: 0.75rem; font-weight: 400;
+    text-transform: none; letter-spacing: normal; max-width: 320px;
+    white-space: normal; opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+.objectives h3:hover::after { opacity: 1; }
+.objectives ul { margin: 0.3rem 0 0 1.4rem; }
+.objectives li { margin-bottom: 0.35rem; }
+
+/* SECTION: Chapter Overview
+   ============================================================ */
+.overview {
+    max-width: 750px;
+    margin: 2rem auto 2.5rem;
+    padding: 1.6rem 2rem;
+    background: linear-gradient(135deg, rgba(15,52,96,0.05), rgba(15,52,96,0.02));
+    border: 1px solid rgba(15,52,96,0.12);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    font-size: 0.97rem;
+    line-height: 1.75;
+}
+.overview h2 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.25rem;
+    color: var(--accent);
+    margin: 0 0 0.8rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid rgba(15,52,96,0.15);
+}
+.overview p { text-align: left; }
+.overview p:last-child { margin-bottom: 0; }
+
+/* SECTION: Chapter Cards (part-level index pages)
+   ============================================================ */
+.chapter-card {
+    background: white;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    transition: box-shadow 0.25s, transform 0.25s;
+}
+.chapter-card:hover {
+    box-shadow: 0 6px 20px rgba(0,0,0,0.09);
+    transform: translateY(-3px);
+}
+.chapter-card-header {
+    background: var(--primary, #1a1a2e);
+    color: white;
+    padding: 1.1rem 1.5rem;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+.chapter-card-header a,
+.content .chapter-card-header a,
+.content .chapter-card-header a:not(.section-card):not(.toc-link):not(.book-title-link):not(.toc-part-header):not(.toc-ch) {
+    color: #ffffff;
+    text-decoration: none;
+}
+.chapter-card-header a:hover,
+.content .chapter-card-header a:hover {
+    opacity: 0.9;
+    text-decoration: underline;
+    color: #ffffff;
+}
+.chapter-card-header .mod-num {
+    background: rgba(255,255,255,0.2);
+    padding: 2px 10px;
+    border-radius: 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-right: 0.5rem;
+}
+.chapter-card-body {
+    padding: 1.3rem 1.5rem;
+    font-size: 0.93rem;
+    line-height: 1.6;
+}
+.chapter-card-body p { margin-bottom: 0.8rem; }
+.chapter-card-body .section-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.6rem 0 0;
+    border-top: 1px solid #f0f0f0;
+}
+.chapter-card-body .section-list li {
+    padding: 0.4rem 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.9rem;
+}
+.chapter-card-body .section-list li:last-child { border-bottom: none; }
+.chapter-card-body .section-list a {
+    color: var(--accent);
+    text-decoration: none;
+    display: block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+.chapter-card-body .section-list a:hover {
+    color: var(--highlight);
+    background: rgba(15,52,96,0.04);
+}
+.chapter-card-body .section-list .sec-num {
+    color: var(--highlight);
+    font-weight: 700;
+    margin-right: 0.4rem;
+    min-width: 2.2rem;
+    display: inline-block;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* SECTION: Section Cards (chapter-level index pages)
+   ============================================================ */
+.sections-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.sections-list li { margin: 0; }
+.section-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.8rem;
+    padding: 1.2rem 1.4rem;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    transition: box-shadow 0.2s, transform 0.2s, border-color 0.2s;
+    text-decoration: none;
+    color: inherit;
+}
+.section-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    transform: translateY(-2px);
+    border-left-color: var(--highlight);
+}
+.section-num {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: white;
+    background: var(--accent);
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    min-width: 2.5rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+.section-card:hover .section-num { background: var(--highlight); }
+.section-title {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 1rem;
+    flex: 1 1 60%;
+}
+.section-desc {
+    font-size: 0.88rem;
+    color: var(--text-light, #666);
+    line-height: 1.55;
+    flex: 1 1 100%;
+    margin-top: -0.2rem;
+}
+
+/* SECTION: Course Cards (syllabi/pathways grids)
+   ============================================================ */
+.course-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0 2rem;
+}
+.course-link-card {
+    display: flex;
+    flex-direction: column;
+    padding: 1.3rem 1.4rem 1.2rem;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+    transition: box-shadow 0.25s, transform 0.25s, border-color 0.25s;
+    position: relative;
+    overflow: hidden;
+}
+.course-link-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(135deg, var(--accent), var(--highlight));
+    border-radius: 12px 12px 0 0;
+}
+.course-link-card:hover {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.10);
+    transform: translateY(-3px);
+    border-color: var(--accent);
+}
+.course-link-card .crs-num {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: white;
+    background: linear-gradient(135deg, var(--accent), var(--highlight));
+    padding: 0.25rem 0.7rem;
+    border-radius: 20px;
+    display: inline-block;
+    width: fit-content;
+    margin-bottom: 0.6rem;
+}
+.course-link-card h3 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--primary);
+    margin: 0 0 0.4rem;
+    line-height: 1.3;
+    border-bottom: none;
+}
+.course-link-card:hover h3 { color: var(--accent); }
+.course-link-card .crs-desc {
+    font-size: 0.88rem;
+    color: var(--text-light, #666);
+    line-height: 1.55;
+    flex: 1;
+}
+.crs-fields { margin-top: 0.5rem; }
+.crs-field { font-size: 0.85rem; color: #555; line-height: 1.5; margin-bottom: 0.2rem; }
+.crs-label { font-weight: 600; color: var(--primary); margin-right: 0.3rem; }
+.crs-label::after { content: ':'; }
+.course-link-card h3 a { color: inherit; text-decoration: none; }
+.course-link-card h3 a:hover { color: var(--accent); }
+/* Alternate accent colors for track cards to distinguish from course cards */
+.course-grid .course-link-card:nth-child(1)::before { background: linear-gradient(135deg, #0f3460, #2980b9); }
+.course-grid .course-link-card:nth-child(2)::before { background: linear-gradient(135deg, #e94560, #ff6b6b); }
+.course-grid .course-link-card:nth-child(3)::before { background: linear-gradient(135deg, #2d6a4f, #52b788); }
+.course-grid .course-link-card:nth-child(4)::before { background: linear-gradient(135deg, #7b2cbf, #c77dff); }
+.course-grid .course-link-card:nth-child(5)::before { background: linear-gradient(135deg, #e76f51, #f4a261); }
+/* Matching badge colors */
+.course-grid .course-link-card:nth-child(1) .crs-num { background: linear-gradient(135deg, #0f3460, #2980b9); }
+.course-grid .course-link-card:nth-child(2) .crs-num { background: linear-gradient(135deg, #e94560, #ff6b6b); }
+.course-grid .course-link-card:nth-child(3) .crs-num { background: linear-gradient(135deg, #2d6a4f, #52b788); }
+.course-grid .course-link-card:nth-child(4) .crs-num { background: linear-gradient(135deg, #7b2cbf, #c77dff); }
+.course-grid .course-link-card:nth-child(5) .crs-num { background: linear-gradient(135deg, #e76f51, #f4a261); }
+
+@media (max-width: 600px) {
+    .course-grid { grid-template-columns: 1fr; }
+}
+
+/* SECTION: Syllabus Table
+   ============================================================ */
+.syllabus-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    margin: 1rem 0 2rem;
+}
+.syllabus-table thead th {
+    background: var(--primary);
+    color: white;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.82rem;
+    letter-spacing: 0.3px;
+}
+.syllabus-table td {
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid #e8e8e8;
+    vertical-align: top;
+    line-height: 1.5;
+}
+.syllabus-table tr:hover td {
+    background: #f4f7fa;
+}
+.syllabus-table td:first-child {
+    font-weight: 700;
+    color: var(--accent);
+    width: 3.5rem;
+    text-align: center;
+}
+
+/* SECTION: Agent Cards (compact)
+   ============================================================ */
+.agent-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.9rem 1rem;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 10px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+}
+.agent-card img {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--accent);
+    flex-shrink: 0;
+}
+.agent-card .agent-info {
+    flex: 1;
+    min-width: 0;
+}
+.agent-card .agent-num {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--highlight);
+    letter-spacing: 1px;
+}
+.agent-card .agent-name {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: var(--primary);
+    line-height: 1.25;
+    margin: 0.1rem 0 0.25rem;
+}
+.agent-card .agent-desc {
+    font-size: 0.78rem;
+    color: var(--text-light);
+    line-height: 1.45;
+}
+@media (max-width: 600px) {
+    .agent-card img { width: 40px; height: 40px; }
+}
+
+/* SECTION: Chapter Navigation (bottom nav bar)
+   ============================================================ */
+.chapter-nav, nav.chapter-nav {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0.75rem;
+    max-width: 820px;
+    margin: 3rem auto 0;
+    padding: 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.88rem;
+    border-top: none;
+}
+.chapter-nav a {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1.1rem;
+    border-radius: 10px;
+    text-decoration: none !important;
+    font-weight: 600;
+    color: var(--accent);
+    background: linear-gradient(135deg, #f0f2f5 0%, #e8ecf1 100%);
+    border: 1px solid #d8dde4;
+    transition: all 0.25s ease;
+    line-height: 1.35;
+}
+.chapter-nav a:hover {
+    color: var(--highlight);
+    background: linear-gradient(135deg, #fff 0%, #f5f0f2 100%);
+    border-color: var(--highlight);
+    box-shadow: 0 3px 12px rgba(233, 69, 96, 0.1);
+    transform: translateY(-1px);
+}
+.chapter-nav a:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 4px rgba(233, 69, 96, 0.08);
+}
+/* Arrow icons via pseudo-elements */
+.chapter-nav a.prev::before,
+.chapter-nav a:first-child:not(.up):not(.next)::before {
+    content: "\2190";
+    font-size: 1.15rem;
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: opacity 0.25s, transform 0.25s;
+}
+.chapter-nav a.prev:hover::before,
+.chapter-nav a:first-child:not(.up):not(.next):hover::before {
+    opacity: 1;
+    transform: translateX(-3px);
+}
+.chapter-nav a.next::after,
+.chapter-nav a:last-child:not(.up):not(.prev)::after {
+    content: "\2192";
+    font-size: 1.15rem;
+    flex-shrink: 0;
+    margin-left: auto;
+    opacity: 0.7;
+    transition: opacity 0.25s, transform 0.25s;
+}
+.chapter-nav a.next:hover::after,
+.chapter-nav a:last-child:not(.up):not(.prev):hover::after {
+    opacity: 1;
+    transform: translateX(3px);
+}
+/* Up/index link in center */
+.chapter-nav a.up,
+.chapter-nav a:nth-child(2) {
+    justify-content: center;
+    text-align: center;
+    font-size: 0.82rem;
+    font-weight: 500;
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-light);
+    padding: 0.6rem 0.8rem;
+}
+.chapter-nav a.up:hover,
+.chapter-nav a:nth-child(2):hover {
+    color: var(--accent);
+    background: rgba(15, 52, 96, 0.04);
+    border-color: rgba(15, 52, 96, 0.1);
+    box-shadow: none;
+    transform: none;
+}
+.chapter-nav a.up::before,
+.chapter-nav a:nth-child(2)::before {
+    content: "\2191";
+    font-size: 1rem;
+    opacity: 0.5;
+}
+/* Next link alignment */
+.chapter-nav a.next,
+.chapter-nav a:last-child:not(.up):not(.prev) {
+    justify-content: flex-end;
+    text-align: right;
+}
+/* Remove old arrow entities from link text via CSS (for pages that include &larr; / &rarr; inline) */
+/* Two-child navs (no "up" link): spread across full width */
+.chapter-nav a:first-child:last-child {
+    grid-column: 1 / -1;
+    justify-content: center;
+}
+
+/* SECTION: Callout Boxes (all types)
+   ============================================================ */
+
+/* Base callout */
+.callout {
+    border: 1px solid;
+    border-left: 5px solid;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    border-radius: 0 8px 8px 0;
+}
+.callout-title {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.3px;
+    margin-bottom: 0.5rem;
+    cursor: help;
+    position: relative;
+}
+
+/* Callout tooltip descriptions (single source of truth, pure CSS, no HTML changes needed) */
+.callout .callout-title::after {
+    position: absolute;
+    left: 0;
+    top: 100%;
+    background: #333;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: normal;
+    font-style: normal;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: normal;
+    max-width: 320px;
+    line-height: 1.4;
+    z-index: 100;
+    margin-top: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+.callout .callout-title:hover::after { opacity: 1; }
+
+/* Tooltip text per callout type */
+.callout.big-picture .callout-title::after {
+    content: "Sets the context: why this topic matters and how it connects to the broader picture.";
+}
+.callout.key-insight .callout-title::after {
+    content: "A core concept or mental model worth remembering. This is one of the section's main takeaways.";
+}
+.callout.note .callout-title::after {
+    content: "Additional detail or clarification that supplements the main text.";
+}
+.callout.warning .callout-title::after {
+    content: "A common mistake, pitfall, or misconception to watch out for.";
+}
+.callout.practical-example .callout-title::after {
+    content: "A real-world scenario showing how practitioners apply this concept in production.";
+}
+.callout.fun-note .callout-title::after {
+    content: "A lighthearted or surprising fact related to the topic. Not essential, but memorable.";
+}
+.callout.research-frontier .callout-title::after {
+    content: "Current research directions and open questions at the cutting edge of this field.";
+}
+.callout.algorithm .callout-title::after {
+    content: "Step-by-step pseudocode or formal procedure for an algorithm discussed in this section.";
+}
+.callout.tip .callout-title::after {
+    content: "A practical shortcut, best practice, or time-saving technique from experienced practitioners.";
+}
+.callout.exercise .callout-title::after {
+    content: "A hands-on exercise to test your understanding. Try it before reading the solution.";
+}
+.callout p:last-child { margin-bottom: 0; }
+
+/* 1. Big Picture (purple) - icon: &#9733; */
+.callout.big-picture {
+    background: linear-gradient(135deg, #f3e5f5, #ede7f6);
+    border-color: #ce93d8;
+    border-left-color: #8e24aa;
+}
+.callout.big-picture .callout-title { color: #6a1b9a; }
+
+/* 2. Key Insight (green) - icon: &#128161; */
+.callout.key-insight {
+    background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+    border-color: #a5d6a7;
+    border-left-color: #43a047;
+}
+.callout.key-insight .callout-title { color: #1b5e20; }
+
+/* 3. Note (blue) - icon: &#128221; */
+.callout.note {
+    background: linear-gradient(135deg, #e3f2fd, #e8eaf6);
+    border-color: #90caf9;
+    border-left-color: #1976d2;
+}
+.callout.note .callout-title { color: #1565c0; }
+
+/* 4. Warning (amber) - icon: &#9888; */
+.callout.warning {
+    background: linear-gradient(135deg, #fff8e1, #fff3e0);
+    border-color: #ffcc80;
+    border-left-color: #f57c00;
+}
+.callout.warning .callout-title { color: #bf360c; }
+
+/* 5. Practical Example (light grey-blue) - icon: &#x1F3D7;&#xFE0F; */
+.callout.practical-example {
+    background: #f5f5f5;
+    border-color: #b3e0f2;
+    border-left-color: #5dade2;
+}
+.callout.practical-example .callout-title { color: #2471a3; }
+
+/* 6. Fun Note (pink) - icon: &#127914; */
+.callout.fun-note {
+    background: linear-gradient(135deg, #fce4ec, #f3e5f5);
+    border-color: #f48fb1;
+    border-left-color: #e91e63;
+}
+.callout.fun-note .callout-title { color: #c2185b; }
+
+/* 7. Research Frontier (purple-blue) - icon: &#128300; */
+.callout.research-frontier {
+    background: linear-gradient(135deg, #e8eaf6, #e3f2fd);
+    border-color: #9fa8da;
+    border-left-color: #5e35b1;
+}
+.callout.research-frontier .callout-title { color: #4527a0; }
+
+/* 8. Algorithm / Pseudocode (indigo) - icon: &#9881; */
+.callout.algorithm {
+    background: linear-gradient(135deg, #f3effc, #eceaf8);
+    border-color: #9581c4;
+    border-left-color: #4a55a2;
+}
+.callout.algorithm .callout-title { color: #2e3990; }
+.callout.algorithm pre {
+    background: #faf8ff;
+    color: #1a1a2e;
+    border: 1px solid #c5b8e0;
+    font-size: 0.88rem;
+    line-height: 1.7;
+}
+.callout.algorithm .algo-line-keyword {
+    color: #3949ab;
+    font-weight: 700;
+}
+.callout.algorithm .algo-line-comment {
+    color: #6b6b6b;
+    font-style: italic;
+}
+/* Tip callout: practical advice, shortcuts, pro-tips */
+.callout.tip {
+    background: linear-gradient(135deg, #e0f7fa, #e1f5fe);
+    border-color: #80deea;
+    border-left-color: #00acc1;
+}
+.callout.tip .callout-title { color: #006064; }
+
+/* 10. Exercise (deep orange) - icon: &#9998; */
+.callout.exercise {
+    background: linear-gradient(135deg, #fbe9e7, #fff3e0);
+    border-color: #ffab91;
+    border-left-color: #e64a19;
+}
+.callout.exercise .callout-title { color: #c62828; }
+.callout.exercise details { margin-top: 1rem; }
+.callout.exercise details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #c62828;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.9rem;
+}
+.callout.exercise ol, .callout.exercise ul { margin-top: 0.5rem; }
+
+/* Callout icons via CSS (single source of truth) */
+.callout .callout-title::before {
+    content: '';
+    display: inline-block;
+    width: 1.2em;
+    height: 1.2em;
+    margin-right: 0.4em;
+    vertical-align: middle;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+.callout.big-picture .callout-title::before { background-image: url('icons/callout-big-picture.png'); }
+.callout.key-insight .callout-title::before { background-image: url('icons/callout-key-insight.png'); }
+.callout.note .callout-title::before { background-image: url('icons/callout-note.png'); }
+.callout.warning .callout-title::before { background-image: url('icons/callout-warning.png'); }
+.callout.practical-example .callout-title::before { background-image: url('icons/callout-practical-example.png'); }
+.callout.fun-note .callout-title::before { background-image: url('icons/callout-fun-note.png'); }
+.callout.research-frontier .callout-title::before { background-image: url('icons/callout-research-frontier.png'); }
+.callout.algorithm .callout-title::before { background-image: url('icons/callout-algorithm.png'); }
+.callout.tip .callout-title::before { background-image: url('icons/callout-tip.png'); }
+.callout.exercise .callout-title::before { background-image: url('icons/callout-exercise.png'); }
+.callout.key-takeaway .callout-title::before { background-image: url('icons/callout-key-takeaway.svg'); }
+.callout.pathway .callout-title::before { background-image: url('icons/callout-pathway.svg'); }
+.callout.lab .callout-title::before { background-image: url('icons/callout-lab.svg'); }
+.callout.self-check .callout-title::before { background-image: url('icons/callout-self-check.svg'); }
+.callout.library-shortcut .callout-title::before { background-image: url('icons/callout-library-shortcut.svg'); }
+
+/* 11. Key Takeaway (warm gold) */
+.callout.key-takeaway {
+    background: linear-gradient(135deg, #fff8e1, #fffde7);
+    border: 1px solid #ffd54f;
+    border-left: 5px solid #f9a825;
+}
+.callout.key-takeaway .callout-title { color: #f57f17; }
+
+/* 12. Library Shortcut (teal/cyan) */
+.callout.library-shortcut {
+    background: linear-gradient(135deg, #e0f2f1, #e0f7fa);
+    border-color: #80cbc4;
+    border-left-color: #00897b;
+}
+.callout.library-shortcut .callout-title { color: #00695c; }
+.callout.library-shortcut .callout-title::after {
+    content: "A popular library that accomplishes the same task in fewer lines. Install and try it.";
+}
+.callout.library-shortcut pre { margin-top: 0.75rem; }
+.callout .callout-label {
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 0.4rem;
+}
+.callout.library-shortcut .callout-label { color: #00695c; }
+.callout.key-takeaway .callout-title::after {
+    content: "The essential takeaway from this section that you should remember.";
+}
+
+.callout.pathway {
+    background: linear-gradient(135deg, #ede7f6, #e8eaf6);
+    border-color: #b39ddb;
+    border-left-color: #7e57c2;
+}
+.callout.pathway .callout-title { color: #5e35b1; }
+.callout.pathway .callout-title::after {
+    content: "A recommended learning pathway through the book.";
+}
+
+/* 14. Self-Check / Quiz (indigo) */
+.callout.self-check {
+    background: linear-gradient(135deg, #e8eaf6, #e3f2fd);
+    border: 1px solid #7986cb;
+    border-left: 5px solid #3949ab;
+}
+.callout.self-check .callout-title { color: #283593; }
+.callout.self-check .callout-title::after {
+    content: "Test your understanding before moving on.";
+}
+.callout.self-check .quiz-question { margin: 1.2rem 0 0.5rem; font-weight: 600; }
+
+/* 15. Lab (green-cyan) */
+.callout.lab {
+    background: linear-gradient(135deg, #e0f2f1, #e8f5e9);
+    border: 1px solid #80cbc4;
+    border-left: 5px solid #00897b;
+}
+.callout.lab .callout-title { color: #00695c; }
+.callout.lab .callout-title::after {
+    content: "A guided hands-on lab with step-by-step instructions. Code along to build your understanding.";
+}
+
+/* Citation lines inside callouts */
+.callout .citation,
+p.citation {
+    font-size: 0.88rem;
+    color: #666;
+    margin-top: 0.5rem;
+}
+
+/* SECTION: Code Blocks & Output
+   ============================================================ */
+pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 1.5rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 1.2rem 0;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.92rem;
+    line-height: 1.6;
+}
+code {
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.92em;
+}
+p code, li code {
+    background: #eef;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    color: var(--accent);
+}
+
+/* Prism.js integration: prevent pre>code from inheriting inline-code styles */
+pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: inherit;
+    font-size: inherit;
+}
+
+.code-output {
+    background: #f8f8f4;
+    border-left: 4px solid #7ab648;
+    color: #333;
+    padding: 1rem 1.5rem;
+    border-radius: 0 8px 8px 0;
+    margin: -0.5rem 0 0.3rem;
+    font-family: 'Consolas', monospace;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+.code-output::before {
+    content: "▶ Output";
+    display: block;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #7ab648;
+    margin-bottom: 0.5rem;
+}
+/* When output sits between pre and caption, tighten spacing */
+.code-output + .code-caption {
+    margin-top: 0.3rem;
+}
+
+.code-caption {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.88rem;
+    color: #333;
+    text-align: center;
+    margin-top: 0.3rem;
+    margin-bottom: 1.8rem;
+    padding: 0.4rem 1rem;
+    line-height: 1.5;
+    font-style: italic;
+    background: rgba(255,255,255,0.7);
+    border-radius: 4px;
+}
+.code-caption strong {
+    font-style: normal;
+    color: var(--accent);
+    font-weight: 700;
+}
+
+/* Bold/strong inside Prism code blocks: ensure visibility */
+pre[class*="language-"] b,
+pre[class*="language-"] strong {
+    color: #f9e2af;
+    font-weight: 700;
+}
+
+/* Code blocks inside callouts: ensure contrast */
+.callout pre[class*="language-"] {
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+.callout .code-caption {
+    color: #333;
+    background: rgba(255,255,255,0.85);
+}
+
+.code-block-group {
+    margin: 1.5rem 0 2rem;
+}
+
+/* SECTION: Diagrams & Illustrations
+   ============================================================ */
+.diagram-container {
+    margin: 2rem 0;
+    text-align: center;
+}
+.diagram-container svg {
+    max-width: 100%;
+    height: auto;
+}
+.diagram-caption {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.88rem;
+    color: #555;
+    text-align: center;
+    margin-top: 0.5rem;
+    line-height: 1.5;
+    font-style: italic;
+}
+.diagram-caption strong {
+    font-style: normal;
+    color: var(--accent);
+    font-weight: 700;
+}
+
+/* ----- Illustrations ----- */
+.illustration {
+    margin: 2rem auto;
+    text-align: center;
+}
+.illustration img {
+    max-width: 100%;
+    border-radius: 8px;
+}
+/* ----- Figure captions ----- */
+.illustration figcaption,
+figcaption {
+    text-align: center;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.88rem;
+    color: #555;
+    margin-top: 0.5rem;
+    line-height: 1.5;
+    font-style: italic;
+}
+figcaption strong {
+    font-style: normal;
+    color: var(--accent);
+    font-weight: 700;
+}
+.figure-source {
+    display: block;
+    font-size: 0.78rem;
+    font-style: normal;
+    color: #888;
+    margin-top: 0.25rem;
+}
+
+/* SECTION: Comparison Tables
+   ============================================================ */
+.comparison-table {
+    margin: 1.5rem 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #d8dce6;
+    background: #fff;
+}
+.comparison-table-title {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    color: #fff;
+    padding: 0.7rem 1.2rem;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.95rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: help;
+    position: relative;
+}
+.comparison-table-title::before {
+    content: '\2696';
+    font-size: 1.1rem;
+}
+.comparison-table-title::after {
+    content: "Side-by-side comparison of tools, techniques, or approaches. Hover column headers for details.";
+    position: absolute;
+    left: 0;
+    top: 100%;
+    background: #333;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: normal;
+    white-space: normal;
+    max-width: 320px;
+    line-height: 1.4;
+    z-index: 100;
+    margin-top: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+.comparison-table-title:hover::after { opacity: 1; }
+.comparison-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.comparison-table th {
+    background: #f0f2f8;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    font-weight: 600;
+    color: #1a1a2e;
+    border-bottom: 2px solid #d8dce6;
+    font-size: 0.85rem;
+}
+.comparison-table td {
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+    line-height: 1.5;
+}
+.comparison-table tr:last-child td {
+    border-bottom: none;
+}
+.comparison-table tr:nth-child(even) td {
+    background: #f8f9fc;
+}
+.comparison-table .winner {
+    color: #27ae60;
+    font-weight: 600;
+}
+.comparison-table .caution {
+    color: #e67e22;
+    font-weight: 600;
+}
+
+/* SECTION: Bibliography
+   ============================================================ */
+.bibliography {
+    margin-top: 3rem;
+    padding: 2rem;
+    background: linear-gradient(135deg, rgba(15,52,96,0.04), rgba(233,69,96,0.02));
+    border-radius: 8px;
+    border: 1px solid rgba(15,52,96,0.1);
+}
+.bibliography-title {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.3px;
+}
+.bibliography-title::before {
+    content: "\1F4DA\00a0";
+    font-size: 1.1em;
+    color: var(--accent);
+    margin-bottom: 1.2rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--highlight);
+}
+.bib-category {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--highlight);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 1.5rem 0 0.8rem;
+}
+.bib-entry-card {
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.8rem;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s;
+}
+.bib-entry-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.bib-ref {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    margin: 0;
+}
+.bib-ref a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+}
+.bib-ref a:hover { color: var(--highlight); }
+.bib-annotation {
+    font-size: 0.88rem;
+    color: var(--text-light);
+    margin: 0.4rem 0 0;
+    line-height: 1.5;
+}
+.bib-meta {
+    display: inline-block;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.72rem;
+    background: rgba(15,52,96,0.08);
+    color: var(--accent);
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    margin-top: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Aliases for backward-compatible class names */
+.bib-entry { /* alias for bib-entry-card */
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.8rem;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s;
+}
+.bib-entry:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.bib-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+/* SECTION: Cross-References & Glossary
+   ============================================================ */
+.cross-ref {
+    color: #1a6fb5;
+    text-decoration: none;
+    border-bottom: 1.5px dotted rgba(26, 111, 181, 0.5);
+}
+.cross-ref:hover {
+    color: var(--highlight);
+    border-bottom: 2px solid var(--highlight);
+}
+
+/* Glossary page elements */
+.glossary-list { list-style: none; padding: 0; }
+.glossary-entry { padding: 0.8rem 0; border-bottom: 1px solid #f0f0f0; }
+.glossary-term { font-weight: 700; color: var(--primary); font-size: 1.05rem; }
+.glossary-def { margin-top: 0.3rem; font-size: 0.95rem; line-height: 1.6; }
+.glossary-xref { font-size: 0.85rem; color: var(--text-light); margin-top: 0.2rem; }
+.glossary-xref a { color: var(--accent); }
+
+/* SECTION: Part Overview & Section Break
+   ============================================================ */
+.part-overview {
+    max-width: 750px;
+    margin: 2rem auto 2.5rem;
+    padding: 1.6rem 2rem;
+    background: linear-gradient(135deg, rgba(15,52,96,0.05), rgba(15,52,96,0.02));
+    border: 1px solid rgba(15,52,96,0.12);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    font-size: 0.97rem;
+    line-height: 1.75;
+}
+.part-overview h2 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.25rem;
+    color: var(--accent);
+    margin: 0 0 0.8rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid rgba(15,52,96,0.15);
+}
+.part-overview p { text-align: left; }
+.part-overview p:last-child { margin-bottom: 0; }
+
+/* Section break (appendices) */
+.section-break { margin: 2rem 0; border-top: 1px solid #e0e0e0; }
+
+/* SECTION: What's Next Box
+   ============================================================ */
+.whats-next {
+    background: linear-gradient(135deg, #e3f2fd, #e8eaf6);
+    border: 1px solid #90caf9;
+    border-left: 4px solid #1565c0;
+    border-radius: 10px;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+}
+.whats-next h2,
+.whats-next h3 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.3px;
+    color: #1565c0;
+    margin: 0 0 0.5rem;
+}
+.whats-next p:last-child { margin-bottom: 0; }
+.whats-next h2::before,
+.whats-next h3::before {
+    content: "\27A1\00a0";
+    font-size: 1.1em;
+}
+
+/* SECTION: Heading Resets Inside Boxes
+   ============================================================ */
+.callout h2, .callout h3,
+.prereqs h2, .prereqs h3,
+.prerequisites h2, .prerequisites h3,
+.objectives h2, .objectives h3,
+.outcomes h2, .outcomes h3,
+.whats-next h2, .whats-next h3 {
+    margin-top: 0;
+}
+
+/* nav.chapter-nav: unified above in ".chapter-nav, nav.chapter-nav" block */
+
+/* SECTION: Generic Tables
+   ============================================================ */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+}
+th, td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+th {
+    background: var(--primary);
+    color: white;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+tr:nth-child(even) { background: #f8f8f8; }
+
+/* SECTION: Quiz / Check Your Understanding
+   ============================================================ */
+.quiz-question { margin: 1.2rem 0 0.5rem; font-weight: 600; }
+details { margin: 0.5rem 0 1.2rem; }
+summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.3rem 0;
+}
+summary:hover { text-decoration: underline; }
+details .answer {
+    padding: 0.8rem 1rem;
+    background: #eef;
+    border-radius: 6px;
+    margin-top: 0.5rem;
+}
+
+/* SECTION: Key Takeaways
+   ============================================================ */
+.takeaways {
+    background: linear-gradient(135deg, #e0f2f1, #e0f7fa);
+    border: 1px solid #80cbc4;
+    border-left: 5px solid #00897b;
+    border-radius: 0 8px 8px 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+}
+.takeaways h2,
+.takeaways h3 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.3px;
+    border-bottom: none;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    color: #00695c;
+}
+.takeaways h2::before,
+.takeaways h3::before {
+    content: '';
+    display: inline-block;
+    width: 1.2em;
+    height: 1.2em;
+    margin-right: 0.4em;
+    vertical-align: middle;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-image: url('icons/callout-key-insight.png');
+}
+.takeaways ul { margin-top: 0.5rem; }
+.takeaways li:last-child { margin-bottom: 0; }
+
+/* SECTION: Labs
+   ============================================================ */
+.lab {
+    background: linear-gradient(135deg, #e8eaf6, #e3f2fd);
+    border: 2px solid var(--accent);
+    border-radius: 10px;
+    padding: 2rem;
+    margin: 2.5rem 0;
+}
+.lab-meta {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.85rem;
+    color: var(--text-light);
+    margin-bottom: 1rem;
+}
+.lab-step {
+    background: white;
+    border-radius: 8px;
+    padding: 1.2rem;
+    margin: 1rem 0;
+    border: 1px solid rgba(0,0,0,0.06);
+}
+.lab-expected {
+    background: #f1f8e9;
+    border-left: 4px solid #43a047;
+    padding: 1rem 1.5rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1rem 0;
+}
+.lab-stretch {
+    background: #fff8e1;
+    border-left: 4px solid #f57c00;
+    padding: 1rem 1.5rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1rem 0;
+}
+
+/* Lab sub-elements */
+.lab-objective {
+    background: linear-gradient(135deg, #e3f2fd, #f3e5f5);
+    border-left: 4px solid #1e88e5;
+    padding: 1rem 1.2rem;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 1.2rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+}
+
+.lab-skills {
+    margin-bottom: 1.2rem;
+}
+.lab-skills h4 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; color: #555; margin-bottom: 0.5rem; }
+.lab-skills ul { padding-left: 1.5rem; }
+.lab-skills li { margin-bottom: 0.3rem; font-size: 0.92rem; }
+
+.lab-prereqs {
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1.2rem;
+    font-size: 0.9rem;
+}
+.lab-prereqs h4 { font-size: 0.9rem; margin-bottom: 0.5rem; }
+.lab-prereqs code { background: #e8e8e8; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.85rem; }
+
+.lab-solution summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--accent, #0f3460);
+    padding: 0.5rem 0;
+    font-size: 0.95rem;
+}
+.lab-solution summary:hover { color: var(--highlight, #e94560); }
+
+/* SECTION: Math (KaTeX)
+   ============================================================ */
+.math {
+    white-space: nowrap;
+    background: #f4f6fa;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    border: 1px solid #e4e7ef;
+    font-size: 0.95em;
+    vertical-align: baseline;
+    line-height: inherit;
+}
+.math .katex { font-size: 1em; }
+.math-block {
+    position: relative;
+    background: linear-gradient(135deg, #f8f9fc 0%, #f0f2f8 100%);
+    border: 1px solid #d8dce6;
+    border-left: 4px solid var(--accent, #0f3460);
+    border-radius: 6px;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    text-align: center;
+    font-size: 1.1rem;
+    line-height: 1.8;
+    overflow-x: auto;
+}
+.math-block .katex-display { margin: 0; }
+.math-block .katex-display > .katex { font-size: 1.1em; }
+.math-block-label {
+    display: block;
+    text-align: left;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-style: normal;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--accent, #0f3460);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid #e0e3ea;
+}
+.math-block p {
+    margin: 0.4rem 0;
+}
+.math-block .math-where {
+    display: block;
+    text-align: left;
+    font-style: normal;
+    font-size: 0.92rem;
+    color: #555;
+    margin-top: 0.6rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed #d8dce6;
+    line-height: 1.6;
+}
+.math-block .math-where strong {
+    font-style: italic;
+    font-family: 'Georgia', 'Cambria Math', serif;
+    color: #333;
+}
+
+/* SECTION: Syntax Highlighting Tokens
+   ============================================================ */
+.kw { color: #cba6f7; font-weight: bold; }
+.fn { color: #89b4fa; }
+.st { color: #a6e3a1; }
+.cm { color: #6c7086; font-style: italic; }
+.nu { color: #fab387; }
+.op { color: #89dceb; }
+.va { color: #f38ba8; }
+
+/* SECTION: Module Index Page Overrides
+   ============================================================ */
+.chapter-index .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 3rem 2rem;
+}
+/* SECTION: Responsive: Tablet (1024px)
+   ============================================================ */
+@media (max-width: 1024px) {
+    .content { max-width: 100%; padding: 2rem 1.5rem; }
+    .chapter-header { padding: 0 1.5rem 2.5rem; }
+    .chapter-header h1 { font-size: 2rem; }
+    .header-nav { font-size: 0.78rem; }
+    .epigraph, .prereqs, .prerequisites { max-width: 100%; }
+    svg { max-width: 100%; height: auto; }
+    .illustration img { max-width: 100%; height: auto; }
+    .section-card { padding: 1rem 1.2rem; }
+    .chapter-card { margin-bottom: 1.2rem; }
+}
+
+/* SECTION: Responsive: iPad Mini (768px)
+   ============================================================ */
+@media (max-width: 768px) {
+    .content { padding: 1.5rem 1rem; }
+    .chapter-header { padding: 0 1rem 2rem; }
+    .chapter-header h1 { font-size: 1.6rem; }
+    .chapter-header .subtitle,
+    .chapter-header .chapter-subtitle { font-size: 0.95rem; }
+    .header-nav { padding: 0.5rem 0.2rem; margin: 0 -0.2rem 1.2rem; }
+    .header-nav .book-title-link { font-size: 0.72rem; max-width: 55%; }
+    .header-nav .toc-link { font-size: 0.72rem; padding: 0.2rem 0.4rem; }
+    body { font-size: 16px; line-height: 1.75; }
+    h2 { font-size: 1.5rem; margin-top: 2rem; }
+    h3 { font-size: 1.2rem; }
+    table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    pre { overflow-x: auto; -webkit-overflow-scrolling: touch; font-size: 0.82rem; }
+    .callout { margin-left: 0; margin-right: 0; padding: 1rem 1.2rem; }
+    .math-block { padding: 0.8rem 1rem; font-size: 1rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .objectives, .prereqs, .prerequisites { padding: 1rem 1.2rem; }
+    .overview { padding: 1rem 1.2rem; }
+    .section-card { flex-direction: column; gap: 0.4rem; padding: 0.9rem 1rem; }
+    .section-num { min-width: auto; }
+    .chapter-card-header { padding: 0.8rem 1rem; }
+    .chapter-card-body { padding: 1rem; }
+    .chapter-nav, nav.chapter-nav {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    .chapter-nav a.next, .chapter-nav a:last-child:not(.up):not(.prev) {
+        justify-content: center;
+        text-align: center;
+    }
+    .chapter-nav a.prev, .chapter-nav a:first-child:not(.up):not(.next) {
+        justify-content: center;
+        text-align: center;
+    }
+    .chapter-nav a.up, .chapter-nav a:nth-child(2) {
+        order: -1;
+    }
+    .comparison-table { font-size: 0.82rem; overflow-x: auto; }
+    .comparison-table th, .comparison-table td { padding: 0.4rem 0.6rem; }
+    .bibliography { padding: 1.5rem 1rem; }
+    .whats-next { padding: 1.2rem 1rem; }
+    .part-label { font-size: 0.85rem; }
+    .chapter-label { font-size: 0.78rem; letter-spacing: 2px; }
+    .illustration figcaption { font-size: 0.85rem; }
+}
+
+/* SECTION: Responsive: Mobile (480px)
+   ============================================================ */
+@media (max-width: 480px) {
+    .content { padding: 1rem 0.75rem; }
+    .chapter-header { padding: 0 0.75rem 1.5rem; }
+    .chapter-header h1 { font-size: 1.4rem; }
+    .epigraph, .prereqs, .prerequisites { max-width: 100%; margin-left: 0; margin-right: 0; }
+    .header-nav .book-title-link { font-size: 0.68rem; max-width: 50%; }
+    .header-nav .toc-link { font-size: 0.68rem; }
+    .callout { padding: 0.8rem 1rem; font-size: 0.92rem; }
+    .section-card { border-left-width: 3px; }
+    .section-desc { font-size: 0.85rem; }
+    pre { font-size: 0.78rem; padding: 0.8rem; }
+    .code-caption { font-size: 0.8rem; }
+    .bib-entry-card, .bib-entry { padding: 0.8rem; }
+    h2 { font-size: 1.3rem; }
+    h3 { font-size: 1.1rem; }
+}
+
+/* SECTION: Print
+   ============================================================ */
+@media print {
+    .chapter-header { background: none; color: var(--primary); border-bottom: 2px solid var(--primary); padding-top: 1rem; }
+    .header-nav { display: none; }
+    .chapter-nav, nav.chapter-nav { display: none; }
+    .callout { break-inside: avoid; }
+    .math-block { break-inside: avoid; background: #f5f5f5; border-color: #999; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+    .whats-next { display: none; }
+    a[href]::after { content: " (" attr(href) ")"; font-size: 0.8em; color: #666; }
+    .content a::after { content: none; } /* Too noisy for inline links */
+}
+
+/* SECTION: Nav Footer (legacy)
+   ============================================================ */
+.nav-footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 2rem 0;
+    margin-top: 3rem;
+    border-top: 1px solid #e0e0e0;
+    font-size: 0.95rem;
+}
+
+.nav-footer a {
+    color: var(--primary, #0f3460);
+    text-decoration: none;
+}
+
+.nav-footer a:hover {
+    text-decoration: underline;
+}
+
+/* SECTION: Level Badges & Exercise-Type Badges
+   ============================================================ */
+/* --- Level badges: small inline icons, text as tooltip --- */
+.level-badge {
+    display: inline;
+    font-size: 0;            /* hide text */
+    color: transparent;       /* hide text */
+    padding: 0;
+    vertical-align: middle;
+    margin-left: 0.3rem;
+    cursor: help;
+    position: relative;
+    line-height: 1;
+    transition: transform 0.15s ease;
+}
+.level-badge:hover { transform: scale(1.2); }
+/* Tooltip on hover */
+.level-badge::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 120%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: #fff;
+    font-size: 0.7rem;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 10;
+}
+.level-badge:hover::after { opacity: 1; }
+
+.level-badge.basic::before { content: "\1F7E2"; font-size: 0.6rem; }
+.level-badge.intermediate::before { content: "\1F7E1"; font-size: 0.6rem; }
+.level-badge.advanced::before { content: "\1F534"; font-size: 0.6rem; }
+.level-badge.research::before { content: "\1F52C"; font-size: 0.6rem; }
+
+/* --- Exercise-type badges: Gemini-generated icons, text as tooltip --- */
+.exercise-type {
+    display: inline-block;
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0;            /* hide text */
+    color: transparent;       /* hide text */
+    padding: 0;
+    border-radius: 50%;
+    vertical-align: middle;
+    margin-left: 0.4rem;
+    background-size: 80%;
+    background-repeat: no-repeat;
+    background-position: center;
+    cursor: help;
+    position: relative;
+    border: 2px solid;
+    transition: transform 0.15s ease;
+}
+.exercise-type:hover { transform: scale(1.2); }
+/* Tooltip on hover */
+.exercise-type::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 120%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: #fff;
+    font-size: 0.7rem;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 10;
+}
+.exercise-type:hover::after { opacity: 1; }
+
+.exercise-type.conceptual {
+    background-color: #e8eaf6;
+    border-color: #9fa8da;
+    background-image: url('icons/conceptual-exercise-icon.png');
+}
+.exercise-type.coding {
+    background-color: #e0f2f1;
+    border-color: #80cbc4;
+    background-image: url('icons/coding-exercise-icon.png');
+}
+.exercise-type.analysis {
+    background-color: #f3e5f5;
+    border-color: #ce93d8;
+    background-image: url('icons/analysis-exercise-icon.png');
+}
+.exercise-type.discussion {
+    background-color: #fff3e0;
+    border-color: #ffcc80;
+    background-image: url('icons/discussion-exercise-icon.png');
+}
+
+/* Level legend box (appears at top of each section) */
+.level-legend {
+    max-width: 500px;
+    margin: 1rem auto 2rem;
+    padding: 0.8rem 1.2rem;
+    background: #fafafa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.8;
+}
+.level-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 2px 0;
+}
+
+/* SECTION: Book Index Page (index.html)
+   ============================================================ */
+
+/* Index page uses sans-serif body font */
+body.index-page {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+}
+
+/* Header bar */
+body.index-page header {
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white;
+    padding: 0 2rem 2rem;
+    text-align: center;
+}
+body.index-page header h1 {
+    font-size: 2.2rem;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+}
+body.index-page header .chapter-subtitle {
+    font-size: 1.1rem;
+    opacity: 0.85;
+    max-width: 750px;
+    margin: 0 auto;
+    text-align: center;
+}
+.meta-bar {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    opacity: 0.9;
+}
+.meta-bar span {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* Main container for ToC / index pages */
+body.index-page .container {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+}
+
+/* Legend bar */
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; padding: 1rem 1.5rem; background: var(--card-bg); border-radius: 10px; border: 1px solid var(--border); }
+.legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.badge { display: none; }
+.badge-group { display: none; }
+
+/* Table of Contents */
+.toc {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border, #dfe6e9);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+}
+.toc h3 { margin-bottom: 1rem; font-size: 1.1rem; }
+.toc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 0.4rem 2rem;
+}
+.toc-item {
+    font-size: 0.88rem;
+    padding: 3px 0;
+    cursor: pointer;
+    color: var(--accent);
+    text-decoration: none;
+    display: block;
+}
+.toc-item:hover { color: var(--highlight); }
+.toc-item .toc-num { font-weight: 700; margin-right: 0.3rem; }
+
+/* Short TOC: compact inline layout with middot separators */
+#toc-short .stoc-part {
+    margin-bottom: 0.7rem;
+}
+#toc-short .stoc-part:last-child {
+    margin-bottom: 0;
+}
+#toc-short .dense-part-header {
+    margin: 0.4rem 0 0.15rem;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.84rem;
+    border: none;
+    background: var(--primary, #1a1a2e);
+    color: white;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+    line-height: 1.5;
+}
+#toc-short .dense-part-header a {
+    color: white;
+    text-decoration: none;
+    border-bottom: none;
+}
+#toc-short .dense-part-header a:hover {
+    opacity: 0.85;
+}
+#toc-short .stoc-group {
+    display: inline;
+    line-height: 1.7;
+}
+#toc-short .dense-chapter {
+    display: inline;
+    font-size: 0.84rem;
+    line-height: 1.7;
+}
+#toc-short .dense-chapter + .dense-chapter::before {
+    content: "\00b7";
+    margin: 0 0.35rem;
+    color: #b0bec5;
+    font-weight: 700;
+}
+#toc-short .dense-ch-num {
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--highlight, #e94560);
+    margin-right: 0.15rem;
+}
+#toc-short .dense-chapter a {
+    color: var(--accent, #0f3460);
+    text-decoration: none;
+    border-bottom: none;
+}
+#toc-short .dense-chapter a:hover {
+    color: var(--highlight, #e94560);
+    text-decoration: underline;
+}
+#toc-short .dense-appendices-header {
+    margin-top: 0.4rem;
+    color: #ffffff;
+}
+
+/* Legacy card-based classes (kept for compat) */
+#toc-short .toc-part-group {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border, #dfe6e9);
+    border-radius: 10px;
+    margin-bottom: 0.6rem;
+    overflow: hidden;
+}
+#toc-short a.toc-part-header,
+#toc-short span.toc-part-header {
+    display: block;
+    padding: 0.55rem 1.2rem;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white !important;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-decoration: none;
+    border-bottom: none;
+}
+#toc-short a.toc-part-header:hover { filter: brightness(1.15); }
+#toc-short .toc-appendices-header {
+    background: linear-gradient(135deg, #5a6672, #78909c) !important;
+    font-size: 0.8rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+#toc-short .toc-chapters {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0;
+    padding: 0.3rem 0;
+}
+#toc-short a.toc-ch {
+    display: block;
+    padding: 0.3rem 1.2rem;
+    font-size: 0.85rem;
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: none;
+    transition: background 0.15s, color 0.15s;
+}
+#toc-short a.toc-ch:hover { background: rgba(15, 52, 96, 0.06); color: var(--highlight); }
+#toc-short .toc-ch .toc-num {
+    display: inline-block;
+    min-width: 2rem;
+    font-weight: 700;
+    color: var(--highlight);
+    font-size: 0.82rem;
+}
+#toc-short .toc-appendix-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+@media (max-width: 600px) {
+    #toc-short .toc-chapters { grid-template-columns: 1fr; }
+    #toc-short .toc-appendix-grid { grid-template-columns: 1fr; }
+}
+.toc-item .new-badge {
+    background: var(--highlight);
+    color: white;
+    font-size: 0.65rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+/* Dense detailed ToC (flat, print-style layout) */
+.dense-part-header {
+    margin: 1.2rem 0 0.3rem 0;
+    padding: 0.45rem 0.8rem;
+    background: #111122;
+    color: #ffffff;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+}
+.dense-part-header:first-child { margin-top: 0; }
+.dense-part-header a,
+.content .dense-part-header a,
+.content .dense-part-header a:not(.section-card):not(.toc-link):not(.book-title-link):not(.toc-part-header):not(.toc-ch) {
+    color: #ffffff;
+    text-decoration: none;
+}
+.dense-part-header a:hover,
+.content .dense-part-header a:hover {
+    text-decoration: underline;
+    color: #ffffff;
+}
+.dense-chapter {
+    margin: 0.25rem 0 0 0;
+    padding: 0 0.2rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+.dense-chapter a { color: var(--accent); text-decoration: none; }
+.dense-chapter a:hover { color: var(--highlight); text-decoration: underline; }
+.dense-ch-num {
+    display: inline-block;
+    min-width: 2.8rem;
+    color: var(--highlight);
+    font-weight: 700;
+    font-size: 0.82rem;
+}
+.dense-sections {
+    margin: 0 0 0.15rem 3rem;
+    padding: 0;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #555;
+}
+.dense-sections a {
+    color: var(--highlight);
+    font-weight: 700;
+    text-decoration: none;
+    margin-right: 0.1rem;
+}
+.dense-sections a:hover { text-decoration: underline; }
+@media (max-width: 600px) {
+    .dense-sections { margin-left: 1rem; }
+    .dense-ch-num { min-width: 2.2rem; }
+}
+
+/* Prereqs and Outcomes boxes (index page) */
+body.index-page .prereqs,
+body.index-page .outcomes {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border, #dfe6e9);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+}
+body.index-page .outcomes {
+    background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+    border-color: #a5d6a7;
+}
+body.index-page .outcomes h3 { margin-bottom: 0.8rem; color: #2e7d32; }
+body.index-page .prereqs h3 { margin-bottom: 0.8rem; }
+body.index-page .prereqs ul,
+body.index-page .outcomes ul { padding-left: 1.5rem; font-size: 0.92rem; }
+body.index-page .prereqs li,
+body.index-page .outcomes li { margin-bottom: 0.3rem; }
+
+/* Chapter cards */
+.book-chapter {
+    background: var(--card-bg, #fff);
+    border-radius: 12px;
+    border: 1px solid var(--border, #dfe6e9);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    transition: box-shadow 0.2s;
+}
+.book-chapter:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+
+.chapter-header-item {
+    background: linear-gradient(135deg, #16213e, var(--accent));
+    color: white;
+    padding: 1.2rem 1.5rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+}
+.chapter-header-item:hover { filter: brightness(1.1); }
+.chapter-header-item h2 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+.chapter-header-item h2 a,
+.content .chapter-header-item h2 a {
+    color: #ffffff;
+    text-decoration: none;
+}
+.chapter-header-item h2 a:hover,
+.content .chapter-header-item h2 a:hover {
+    text-decoration: underline;
+    color: #ffffff;
+}
+.chapter-num {
+    background: rgba(255,255,255,0.2);
+    padding: 2px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+.chapter-header-item .chevron {
+    font-size: 1.2rem;
+    transition: transform 0.3s;
+}
+.book-chapter.collapsed .chevron { transform: rotate(-90deg); }
+.book-chapter.collapsed .chapter-body { display: none; }
+
+.chapter-body { padding: 1.5rem; }
+.chapter-desc {
+    color: var(--text-light, #636e72);
+    font-size: 0.92rem;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border, #dfe6e9);
+}
+
+/* Lesson rows inside chapter cards */
+.lesson {
+    padding: 0.8rem 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.lesson:last-child { border-bottom: none; }
+.lesson-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.15rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+.lesson-title .lesson-num {
+    color: var(--highlight);
+    font-weight: 700;
+    min-width: 2.5rem;
+    font-size: 0.85rem;
+}
+.lesson-title a { color: var(--accent); text-decoration: none; }
+.lesson-title a:hover { color: var(--highlight); text-decoration: underline; }
+.lesson-topics {
+    margin-left: 3rem;
+    font-size: 0.87rem;
+    color: var(--text-light, #636e72);
+}
+.lesson-topics ul { list-style: none; padding: 0; margin: 0.2rem 0; }
+.lesson-topics li {
+    padding: 1px 0;
+    position: relative;
+    padding-left: 1rem;
+    line-height: 1.4;
+}
+.lesson-topics li::before {
+    content: '\25B8';
+    position: absolute;
+    left: 0;
+    color: var(--highlight);
+    font-size: 0.75rem;
+}
+
+/* Project callout */
+.project-callout {
+    background: linear-gradient(135deg, #fff9e6, #fff3cd);
+    border: 1px solid #f0d060;
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin-top: 1rem;
+    font-size: 0.88rem;
+}
+.project-callout strong { color: #856404; }
+.tools-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+.tool-chip {
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.8rem;
+    color: #4338ca;
+    font-weight: 500;
+}
+
+/* Footer */
+body.index-page footer {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-light, #636e72);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border, #dfe6e9);
+    margin-top: 2rem;
+}
+
+/* Index page responsive overrides */
+@media (max-width: 768px) {
+    body.index-page header h1 { font-size: 1.5rem; }
+    .lesson-topics { margin-left: 1rem; }
+    .toc-grid { grid-template-columns: 1fr; }
+}
+
+/* SECTION: Standalone .container
+   ============================================================ */
+.container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+}
+
+/* Legacy: .book-title-bar replaced by .header-nav inside .chapter-header.
+   Kept as hidden fallback during migration. */
+.book-title-bar { display: none; }
+
+/* SECTION: Page Footer
+   ============================================================ */
+footer {
+    text-align: center;
+    padding: 1.5rem 1rem 2rem;
+    margin-top: 0;
+    color: #aaa;
+    font-size: 0.78rem;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.5;
+    letter-spacing: 0.3px;
+    border-top: 1px solid rgba(0,0,0,0.06);
+}
+footer p { margin-bottom: 0.15rem; text-align: center; }
+footer .footer-title {
+    font-weight: 600;
+    color: #666;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+}
+footer .footer-updated {
+    font-size: 0.72rem;
+    color: #bbb;
+    margin-top: 0.2rem;
+}
+footer a { color: #999; text-decoration: none; }
+footer a:hover { color: var(--accent); }
+
+/* SECTION: Front Matter Cards (pathways, intro sections)
+   ============================================================ */
+
+/* --- Pathway Dependency Diagram --- */
+.pathway-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    margin: 2rem auto;
+    max-width: 750px;
+}
+.pathway-row {
+    display: flex;
+    justify-content: center;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+}
+.pathway-box {
+    padding: 0.7rem 1.2rem;
+    border-radius: 12px;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+    color: white;
+    min-width: 130px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.pathway-box:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+}
+.pathway-box.p1 { background: #1565c0; }
+.pathway-box.p2 { background: #6a1b9a; }
+.pathway-box.p3 { background: #00695c; }
+.pathway-box.p4 { background: #e65100; }
+.pathway-box.p5 { background: #2e7d32; }
+.pathway-box.p6 { background: #c62828; }
+.pathway-box.p7 { background: #4527a0; }
+.pathway-box.p8 { background: #37474f; }
+.pathway-box.capstone { background: linear-gradient(135deg, var(--primary), var(--highlight)); }
+.pathway-arrow {
+    font-size: 1.4rem;
+    color: #999;
+    margin: 0.2rem 0;
+    text-align: center;
+}
+.pathway-branch-label {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.75rem;
+    color: var(--text-light);
+    text-align: center;
+    margin-top: 0.3rem;
+}
+
+/* --- Self-Study Pathway Detail Card (used in introduction-pathways.html) --- */
+.pathway-card {
+    border: 1px solid rgba(0,0,0,0.08);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 12px 12px 0;
+    padding: 1.5rem;
+    margin: 1.2rem 0;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    transition: box-shadow 0.2s, transform 0.2s, border-left-color 0.2s;
+}
+.pathway-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    transform: translateY(-2px);
+    border-left-color: var(--highlight);
+}
+.pathway-card h4 {
+    margin-top: 0;
+    color: var(--accent);
+}
+.pathway-card .time-estimate {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--highlight);
+    margin-bottom: 0.5rem;
+}
+
+/* --- Pathway Link Card Grid (used in front-matter/pathways/index.html) --- */
+.pathway-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.25rem;
+    margin: 1.5rem 0;
+}
+.pathway-link-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.3rem 1.4rem;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    transition: box-shadow 0.25s, transform 0.25s, border-color 0.25s;
+}
+.pathway-link-card:hover {
+    box-shadow: 0 6px 24px rgba(0,0,0,0.1);
+    transform: translateY(-3px);
+    border-color: var(--highlight);
+}
+.pw-avatar {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #f0f4fa 0%, #e8edf5 100%);
+    border-radius: 10px;
+    transition: background 0.25s;
+}
+.pathway-link-card:hover .pw-avatar {
+    background: linear-gradient(135deg, #fce4e8 0%, #fdd 100%);
+}
+.pw-avatar svg {
+    width: 28px;
+    height: 28px;
+}
+.pw-info {
+    flex: 1;
+    min-width: 0;
+}
+.pathway-link-card h3 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--primary);
+    line-height: 1.3;
+}
+.pathway-link-card h3 a { color: inherit; text-decoration: none; }
+.pathway-link-card h3 a:hover { color: var(--accent); }
+.pw-who {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.82rem;
+    color: var(--text-light);
+    margin: 0 0 0.5rem 0;
+    line-height: 1.4;
+}
+.pw-meta {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin: 0 0 0.5rem 0;
+}
+.pw-meta span {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.73rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border-radius: 6px;
+    line-height: 1.4;
+}
+.pw-time {
+    background: #eef2ff;
+    color: var(--accent);
+}
+.pw-level {
+    background: #fef3f2;
+    color: #b42318;
+}
+.pw-topics {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.78rem;
+    color: #555;
+    line-height: 1.45;
+    margin: 0;
+}
+.pw-topics strong {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+/* --- Pathway Reason Descriptors (used in pathway chapter lists) --- */
+.pw-reason { display: inline; font-size: 0.82rem; color: #888; font-style: italic; margin-left: 0.3rem; }
+.pw-reason::before { content: ' \00B7 '; color: #bbb; font-style: normal; }
+
+/* --- Intro Section Cards (used in introduction.html) --- */
+.intro-sections {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+.intro-section-card {
+    display: block;
+    padding: 1.4rem;
+    background: white;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 12px 12px 0;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    transition: box-shadow 0.2s, transform 0.2s, border-left-color 0.2s;
+}
+.intro-section-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+    border-left-color: var(--highlight);
+}
+.intro-section-card h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.05rem;
+    color: var(--accent);
+}
+.intro-section-card p {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--text-light);
+    line-height: 1.55;
+}
+
+/* --- Responsive adjustments for front-matter cards --- */
+@media (max-width: 600px) {
+    .intro-sections { grid-template-columns: 1fr; }
+    .pathway-grid { grid-template-columns: 1fr; }
+    .pathway-link-card { padding: 1rem; gap: 0.75rem; }
+    .pathway-box { min-width: 100px; font-size: 0.78rem; padding: 0.5rem 0.8rem; }
+    .pathway-row { gap: 0.5rem; }
+}

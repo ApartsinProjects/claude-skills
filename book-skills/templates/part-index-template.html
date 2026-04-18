@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<!--
+  PART INDEX TEMPLATE
+  Landing page for a Part (e.g., part-1-foundations/index.html).
+  Lists chapters with descriptions.
+  Replace all {{PLACEHOLDER}} values with actual content.
+  Relative paths assume: book-root/part-N-slug/index.html
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Part {{PART_NUM}}: {{PART_TITLE}}. {{BOOK_TITLE}}.">
+    <title>Part {{PART_NUM}}: {{PART_TITLE}}</title>
+    <link rel="stylesheet" href="../styles/book.css">
+</head>
+<body class="index-page">
+
+<header class="chapter-header">
+<nav class="header-nav">
+    <a href="../index.html" class="book-title-link">{{BOOK_TITLE}}</a>
+    <a href="../toc.html" class="toc-link" title="Table of Contents"><span class="toc-icon">&#9776;</span> Contents</a>
+</nav>
+    <div class="part-label">Part {{PART_NUM}}</div>
+    <h1>{{PART_TITLE}}</h1>
+    <p class="chapter-subtitle">{{PART_SUBTITLE}}</p>
+</header>
+
+<main class="content">
+
+    <!-- Part overview -->
+    <div class="overview">
+        <h2>Overview</h2>
+        <p>{{PART_OVERVIEW}}</p>
+    </div>
+
+    <!-- Chapter listing as cards -->
+    <h2>Chapters</h2>
+
+    <div class="section-card-grid">
+        <a href="module-{{NN}}-{{SLUG}}/index.html" class="section-card">
+            <span class="section-number">Chapter {{CH_NUM}}</span>
+            <span class="section-title">{{CH_TITLE}}</span>
+            <span class="section-desc">{{CH_SHORT_DESC}}</span>
+        </a>
+        <!-- Repeat for each chapter -->
+    </div>
+
+</main>
+
+<footer>
+    <nav class="chapter-nav">
+        <a href="{{PREV_PART_HREF}}" class="prev">&larr; {{PREV_PART_LABEL}}</a>
+        <a href="../toc.html" class="up">&uarr; Contents</a>
+        <a href="{{NEXT_PART_HREF}}" class="next">{{NEXT_PART_LABEL}} &rarr;</a>
+    </nav>
+    <p class="footer-title">{{BOOK_TITLE}}</p>
+    <p>&copy; {{YEAR}} {{AUTHORS}} &middot; <a href="../toc.html">Contents</a></p>
+</footer>
+
+</body>
+</html>

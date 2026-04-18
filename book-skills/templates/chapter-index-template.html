@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<!--
+  CHAPTER INDEX TEMPLATE
+  Landing page for a chapter (e.g., module-01-slug/index.html).
+  Lists sections, prerequisites, outcomes, and chapter overview.
+  Replace all {{PLACEHOLDER}} values with actual content.
+  Relative paths assume: book-root/part-N/module-NN-slug/index.html
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Chapter {{CH_NUM}}: {{CH_TITLE}}. {{BOOK_TITLE}}.">
+    <title>Chapter {{CH_NUM}}: {{CH_TITLE}}</title>
+    <link rel="stylesheet" href="../../styles/book.css">
+</head>
+<body class="index-page chapter-index">
+
+<header class="chapter-header">
+<nav class="header-nav">
+    <a href="../../index.html" class="book-title-link">{{BOOK_TITLE}}</a>
+    <a href="../../toc.html" class="toc-link" title="Table of Contents"><span class="toc-icon">&#9776;</span> Contents</a>
+</nav>
+    <div class="part-label"><a href="../index.html">Part {{PART_NUM}}: {{PART_TITLE}}</a></div>
+    <div class="chapter-label"><a href="../../index.html" class="chapter-num">Chapter {{CH_NUM}}: {{CH_TITLE}}</a></div>
+    <h1>{{CH_TITLE}}</h1>
+</header>
+
+<main class="content">
+
+    <!-- Epigraph -->
+    <blockquote class="epigraph">
+        <p>"{{EPIGRAPH_QUOTE}}"</p>
+        <cite>{{EPIGRAPH_ATTRIBUTION}}</cite>
+    </blockquote>
+
+    <!-- Chapter overview -->
+    <div class="overview">
+        <h2>Chapter Overview</h2>
+        <p><strong>{{OVERVIEW_HOOK}}</strong></p>
+        <p>{{OVERVIEW_BODY}}</p>
+    </div>
+
+    <!-- Prerequisites and Outcomes side-by-side boxes -->
+    <div class="prereqs">
+        <h3>Prerequisites</h3>
+        <ul>
+            <li>{{PREREQ_1}}</li>
+            <li>{{PREREQ_2}}</li>
+        </ul>
+    </div>
+    <div class="outcomes">
+        <h3>Learning Outcomes</h3>
+        <ul>
+            <li>{{OUTCOME_1}}</li>
+            <li>{{OUTCOME_2}}</li>
+        </ul>
+    </div>
+
+    <!-- Section listing -->
+    <h2>Sections in This Chapter</h2>
+
+    <div class="section-card-grid">
+        <a href="section-{{N}}.1.html" class="section-card">
+            <span class="section-number">{{SECTION_NUM}}</span>
+            <span class="section-title">{{SECTION_TITLE}}</span>
+            <span class="section-desc">{{SHORT_DESCRIPTION}}</span>
+        </a>
+        <!-- Repeat for each section -->
+    </div>
+
+</main>
+
+<footer>
+    <nav class="chapter-nav">
+        <a href="{{PREV_CH_HREF}}" class="prev">&larr; {{PREV_CH_LABEL}}</a>
+        <a href="../index.html" class="up">&uarr; Part {{PART_NUM}}</a>
+        <a href="{{NEXT_CH_HREF}}" class="next">{{NEXT_CH_LABEL}} &rarr;</a>
+    </nav>
+    <p class="footer-title">{{BOOK_TITLE}}</p>
+    <p>&copy; {{YEAR}} {{AUTHORS}} &middot; <a href="../../toc.html">Contents</a></p>
+</footer>
+
+</body>
+</html>

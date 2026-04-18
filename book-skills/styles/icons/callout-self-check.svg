@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" stroke="#3949ab" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Checklist with checkmark for self-check callouts -->
+  <rect x="45" y="30" width="110" height="140" rx="8"/>
+  <line x1="70" y1="65" x2="130" y2="65"/>
+  <line x1="70" y1="95" x2="130" y2="95"/>
+  <line x1="70" y1="125" x2="130" y2="125"/>
+  <!-- Checkmarks -->
+  <polyline points="58,62 63,68 73,55" stroke-width="5"/>
+  <polyline points="58,92 63,98 73,85" stroke-width="5"/>
+  <circle cx="65" cy="125" r="6" stroke-width="4"/>
+</svg>

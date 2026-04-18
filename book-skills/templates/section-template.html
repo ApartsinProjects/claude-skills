@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<!--
+  SECTION PAGE TEMPLATE
+  For a single section within a chapter (e.g., Section 1.1, 2.3, A.1).
+  Replace all {{PLACEHOLDER}} values with actual content.
+  Relative paths assume: book-root/part-N/module-NN-slug/section-N.M.html
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Section {{SECTION_NUM}}: {{SECTION_TITLE}}. {{BOOK_TITLE}}.">
+    <title>Section {{SECTION_NUM}}: {{SECTION_TITLE}}</title>
+    <link rel="stylesheet" href="../../styles/book.css">
+    <!-- KaTeX (include only if section uses math) -->
+    <link rel="stylesheet" href="../../vendor/katex/katex.min.css">
+    <script defer src="../../vendor/katex/katex.min.js"></script>
+    <script defer src="../../vendor/katex/auto-render.min.js"
+            onload="renderMathInElement(document.body, {delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+    <!-- Prism syntax highlighting -->
+    <link rel="stylesheet" href="../../vendor/prism/prism.css">
+    <script defer src="../../vendor/prism/prism.js"></script>
+</head>
+<body>
+<header class="chapter-header">
+<nav class="header-nav">
+    <a href="../../index.html" class="book-title-link">{{BOOK_TITLE}}</a>
+    <a href="../../toc.html" class="toc-link" title="Table of Contents"><span class="toc-icon">&#9776;</span> Contents</a>
+</nav>
+    <div class="part-label"><a href="../index.html">Part {{PART_NUM}}: {{PART_TITLE}}</a></div>
+    <div class="chapter-label"><a href="index.html">Chapter {{CH_NUM}}: {{CH_TITLE}}</a></div>
+    <h1>{{SECTION_TITLE}}</h1>
+</header>
+
+<main class="content">
+
+    <!-- Epigraph (optional) -->
+    <blockquote class="epigraph">
+        <p>"{{EPIGRAPH_QUOTE}}"</p>
+        <cite>{{EPIGRAPH_ATTRIBUTION}}</cite>
+    </blockquote>
+
+    <!-- Prerequisites (optional, for first section in chapter) -->
+    <div class="prerequisites">
+        <h3>Prerequisites</h3>
+        <p>{{PREREQUISITES_TEXT}}</p>
+    </div>
+
+    <!-- === SECTION CONTENT BEGINS === -->
+
+    <h2>{{FIRST_SUBSECTION_TITLE}}</h2>
+    <p>{{CONTENT}}</p>
+
+    <!-- Callout example (15 types available, see book.css) -->
+    <div class="callout key-insight">
+        <h3 class="callout-title">Key Insight</h3>
+        <p>{{CALLOUT_CONTENT}}</p>
+    </div>
+
+    <!-- Code block with output -->
+    <div class="code-caption">Code {{SECTION_NUM}}.1: {{CODE_DESCRIPTION}}</div>
+    <pre><code class="language-python">{{CODE_HERE}}</code></pre>
+    <div class="code-output">
+        <div class="output-label">&#9654; Output</div>
+        <pre>{{OUTPUT_HERE}}</pre>
+    </div>
+
+    <!-- Math block example -->
+    <div class="math-block">
+        $$ {{DISPLAY_MATH}} $$
+    </div>
+
+    <!-- Figure example -->
+    <figure>
+        <img src="images/{{FIGURE_FILE}}" alt="{{FIGURE_ALT}}">
+        <figcaption>Figure {{SECTION_NUM}}.1: {{FIGURE_CAPTION}}</figcaption>
+    </figure>
+
+    <!-- Table example -->
+    <div class="table-caption">Table {{SECTION_NUM}}.1: {{TABLE_CAPTION}}</div>
+    <table>
+        <thead>
+            <tr><th scope="col">{{COL1}}</th><th scope="col">{{COL2}}</th><th scope="col">{{COL3}}</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>{{DATA}}</td><td>{{DATA}}</td><td>{{DATA}}</td></tr>
+        </tbody>
+    </table>
+
+    <!-- Exercise callout -->
+    <div class="callout exercise">
+        <h3 class="callout-title">Exercise {{SECTION_NUM}}.1: {{EXERCISE_TITLE}}</h3>
+        <p>{{EXERCISE_PROMPT}}</p>
+    </div>
+
+    <!-- Self-check callout -->
+    <div class="callout self-check">
+        <h3 class="callout-title">Self-Check</h3>
+        <ol>
+            <li>{{QUESTION_1}}</li>
+            <li>{{QUESTION_2}}</li>
+        </ol>
+    </div>
+
+    <!-- === SECTION CONTENT ENDS === -->
+
+    <!-- What's Next (last subsection) -->
+    <h2>What's Next</h2>
+    <p>In <a class="cross-ref" href="{{NEXT_SECTION_HREF}}">Section {{NEXT_SECTION_NUM}}</a>, {{NEXT_SECTION_TEASER}}.</p>
+
+</main>
+
+<footer>
+    <nav class="chapter-nav">
+        <a href="{{PREV_HREF}}" class="prev">&larr; {{PREV_LABEL}}</a>
+        <a href="index.html" class="up">&uarr; Chapter {{CH_NUM}}</a>
+        <a href="{{NEXT_HREF}}" class="next">{{NEXT_LABEL}} &rarr;</a>
+    </nav>
+    <p class="footer-title">{{BOOK_TITLE}}</p>
+    <p>&copy; {{YEAR}} {{AUTHORS}} &middot; <a href="../../toc.html">Contents</a></p>
+</footer>
+
+</body>
+</html>
