@@ -306,16 +306,16 @@ def get_logs(instance_id: int, tail: int = 50) -> str:
 
 
 def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
-    """Wait for instance to reach 'running' state. Raises on error states.
+    """Wait for instance to reach 'running' state with integrated SSH health check.
 
-    Uses a grace period for transient error states to avoid false failures
-    from status flapping during boot.
+    Checks SSH immediately when status hits 'running' (SSHD starts before onstart).
+    Bails fast on broken hosts instead of waiting the full timeout.
     """
     print(f"  [vast] Waiting for instance {instance_id} to boot (timeout={timeout}s)...")
     start = time.time()
     terminal_states = {"exited", "stopped"}
     error_count = 0
-    error_grace = 3  # require 3 consecutive error states before raising
+    error_grace = 3
     while time.time() - start < timeout:
         try:
             info = get_instance(instance_id)
@@ -335,7 +335,16 @@ def wait_for_running(instance_id: int, timeout: int = 300) -> bool:
 
             if status == "running":
                 print()
-                return True
+                # Immediate SSH health check (SSHD starts before onstart)
+                time.sleep(5)
+                if ssh_health_check(instance_id, timeout=10):
+                    print(f"  [vast] SSH health check: OK")
+                    return True
+                else:
+                    print(f"  [vast] SSH health check: FAILED (broken host)")
+                    raise RuntimeError(
+                        f"Instance {instance_id} SSH unreachable after boot. "
+                        f"Host is broken, retry on different offer.")
 
             if status in terminal_states:
                 error_count += 1

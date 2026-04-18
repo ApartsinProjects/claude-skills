@@ -223,17 +223,9 @@ def run_experiment(args):
                 job_info["status"] = "booting"
                 job_path.write_text(json.dumps(job_info, indent=2))
 
-                print("[5/7] Waiting for instance to boot...")
+                print("[5/7] Waiting for instance to boot + SSH health check...")
                 if vast.wait_for_running(instance_id, timeout=300):
-                    time.sleep(5)
-                    if vast.ssh_health_check(instance_id):
-                        print(f"  SSH health check: OK")
-                        break
-                    else:
-                        print(f"  SSH health check failed (host broken), retrying...")
-                        vast.destroy_instance(instance_id)
-                        instance_id = None
-                        continue
+                    break
                 print(f"  Boot failed on offer {cur_offer['id']}, trying next host...")
                 vast.destroy_instance(instance_id)
                 instance_id = None
