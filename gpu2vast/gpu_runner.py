@@ -371,11 +371,15 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
             return ""
 
     if tb_url:
-        print(f"  Opening browser: {tb_url}")
+        print()
+        print(f"  ┌────────────────────────────────────────────┐")
+        print(f"  │  TensorBoard: {tb_url:<29s}│")
+        print(f"  └────────────────────────────────────────────┘")
         try:
             webbrowser.open(tb_url)
+            print(f"  (opened in browser)")
         except Exception:
-            print(f"  Could not open browser automatically. Open manually: {tb_url}")
+            print(f"  (open the link above in your browser)")
 
     return tb_url
 

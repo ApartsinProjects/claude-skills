@@ -397,14 +397,38 @@ ssh_port = inst_info.get("ssh_port", "") if isinstance(inst_info, dict) else ""
 
 conn = vast.get_connection_info(instance_id)
 tb_port = conn.get("port_mappings", {}).get("6006/tcp", {}).get("host_port")
+tb_url = ""
 if tb_port and conn.get("public_ip"):
     tb_url = f"http://{conn['public_ip']}:{tb_port}"
-    print(f"  TensorBoard (direct): {tb_url}")
 elif ssh_host:
-    tb_url = f"http://localhost:6006 (via SSH tunnel)"
-    print(f"  TensorBoard: ssh -p {ssh_port} root@{ssh_host} -L 6006:localhost:6006")
-else:
-    tb_url = ""
+    # Open SSH tunnel for TensorBoard
+    import subprocess as _sp
+    key_path = Path.home() / ".ssh" / "gpu2vast_ed25519"
+    if key_path.exists():
+        try:
+            _sp.Popen(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+                 "-i", str(key_path), "-p", str(ssh_port), f"root@{ssh_host}",
+                 "-L", "6006:localhost:6006", "-N"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            tb_url = "http://localhost:6006"
+        except Exception:
+            pass
+    if not tb_url:
+        print(f"  TensorBoard manual: ssh -p {ssh_port} root@{ssh_host} -L 6006:localhost:6006")
+
+if tb_url:
+    print()
+    print(f"  ┌────────────────────────────────────────────┐")
+    print(f"  │  TensorBoard: {tb_url:<29s}│")
+    print(f"  └────────────────────────────────────────────┘")
+    try:
+        import webbrowser
+        webbrowser.open(tb_url)
+        print(f"  (opened in browser)")
+    except Exception:
+        print(f"  (click the link above)")
 
 def _ssh_tail(lines=40):
     key = Path.home() / ".ssh" / "gpu2vast_ed25519"
