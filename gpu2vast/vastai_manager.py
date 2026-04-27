@@ -76,7 +76,7 @@ def search_gpu(gpu_name: str = "RTX_4090", max_price: float = 0.50,
         "dph_total": {"lte": max_price},
         "inet_down": {"gte": 100},
         "reliability2": {"gte": 0.90},
-        "cuda_max_good": {"gte": 12.4},
+        "cuda_max_good": {"gte": 12.6},
     }
     try:
         results = offers_api.search_offers(client, query=query, storage=float(disk_gb),
@@ -358,15 +358,30 @@ def wait_for_running(instance_id: int, stale_timeout: int = 120) -> bool:
 
             if status == "running":
                 print()
-                time.sleep(5)
-                if ssh_health_check(instance_id, timeout=10):
-                    print(f"  [vast] SSH health check: OK ({elapsed}s total)")
+                # SSH often needs 30-90s post-"running" before it's ready
+                # (especially after Docker image build / apt setup).
+                # Retry several times with backoff before declaring broken.
+                ssh_attempts = 8
+                ssh_delay = 5  # initial wait
+                ssh_ok = False
+                for attempt in range(1, ssh_attempts + 1):
+                    time.sleep(ssh_delay)
+                    if ssh_health_check(instance_id, timeout=10):
+                        print(f"  [vast] SSH health check: OK on attempt {attempt} "
+                              f"({elapsed}s total + {ssh_delay * attempt}s SSH wait)")
+                        ssh_ok = True
+                        break
+                    else:
+                        print(f"  [vast] SSH attempt {attempt}/{ssh_attempts} not ready "
+                              f"(retrying in {ssh_delay}s)…")
+                if ssh_ok:
                     return True
                 else:
-                    print(f"  [vast] SSH health check: FAILED (broken host)")
+                    print(f"  [vast] SSH health check: FAILED after {ssh_attempts} attempts")
                     raise RuntimeError(
-                        f"Instance {instance_id} SSH unreachable after boot. "
-                        f"Host is broken, retry on different offer.")
+                        f"Instance {instance_id} SSH unreachable after "
+                        f"{ssh_attempts} retries ({ssh_attempts*ssh_delay}s). "
+                        f"Host likely broken, retry on different offer.")
 
             if status in terminal_states:
                 error_count += 1

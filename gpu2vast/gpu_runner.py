@@ -23,6 +23,57 @@ from pathlib import Path
 _child_processes = []
 
 
+class _UploadLock:
+    """Serialize concurrent gpu_runner uploads. Bandwidth is shared so two
+    parallel uploads of multi-GB files time out the stale-detector. We hold a
+    skill-wide file lock for the duration of upload_files + upload_config."""
+
+    def __init__(self, lock_dir):
+        from pathlib import Path as _P
+        self.lock_path = _P(lock_dir) / "upload.lock"
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = None
+
+    def __enter__(self):
+        import time, os
+        waited = 0
+        while True:
+            try:
+                self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self._fd, str(os.getpid()).encode())
+                if waited:
+                    print(f"  [upload-lock] acquired after {waited}s wait")
+                return self
+            except FileExistsError:
+                # Read holder PID; if dead, steal the lock
+                try:
+                    holder = int(self.lock_path.read_text().strip() or "0")
+                except Exception:
+                    holder = 0
+                alive = False
+                if holder:
+                    try:
+                        os.kill(holder, 0); alive = True
+                    except OSError:
+                        alive = False
+                if not alive and holder:
+                    print(f"  [upload-lock] stale lock from dead PID {holder}, stealing")
+                    try: self.lock_path.unlink()
+                    except Exception: pass
+                    continue
+                if waited == 0:
+                    print(f"  [upload-lock] another job uploading (PID {holder}); waiting...")
+                time.sleep(5); waited += 5
+
+    def __exit__(self, *exc):
+        import os
+        if self._fd is not None:
+            try: os.close(self._fd)
+            except Exception: pass
+        try: self.lock_path.unlink()
+        except Exception: pass
+
+
 def _cleanup_children():
     """Kill any SSH tunnel or background processes on exit."""
     for proc in _child_processes:
@@ -136,20 +187,21 @@ def run_experiment(args):
         bucket = r2.create_bucket(job_id)
         job_info["r2_bucket"] = bucket
 
-        # 2. Upload data + container scripts
+        # 2. Upload data + container scripts (serialized via skill-wide lock)
         print("[2/7] Uploading data...")
-        r2.upload_files(bucket, args.data)
-        container_files = [
-            str(SKILL_DIR / "container" / "onstart.sh"),
-            str(SKILL_DIR / "container" / "progress_reporter.py"),
-            str(SKILL_DIR / "container" / "gpu2vast_observer.py"),
-        ]
-        r2.upload_files(bucket, container_files, prefix="")
-        r2.upload_config(bucket, {
-            "experiment_cmd": args.script,
-            "results_pattern": args.results_pattern,
-            "job_id": job_id,
-        })
+        with _UploadLock(SKILL_DIR / "jobs"):
+            r2.upload_files(bucket, args.data)
+            container_files = [
+                str(SKILL_DIR / "container" / "onstart.sh"),
+                str(SKILL_DIR / "container" / "progress_reporter.py"),
+                str(SKILL_DIR / "container" / "gpu2vast_observer.py"),
+            ]
+            r2.upload_files(bucket, container_files, prefix="")
+            r2.upload_config(bucket, {
+                "experiment_cmd": args.script,
+                "results_pattern": args.results_pattern,
+                "job_id": job_id,
+            })
         print("  Upload complete")
 
         # 3. Find GPU
@@ -329,7 +381,9 @@ def run_experiment(args):
 
     finally:
         _cleanup(vast, r2, instance_id, bucket, job_info, job_path,
-                 keep_instance=getattr(args, 'keep_alive', False))
+                 keep_instance=getattr(args, 'keep_alive', False),
+                 auto_destroy=getattr(args, 'auto_destroy', False),
+                 local_results=getattr(args, 'local_results', None))
 
 
 def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
@@ -345,6 +399,10 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
     if not py_files:
         print("  No Python files in --data, skipping")
         return True
+
+    # Module names of locally-uploaded .py files — these are sibling imports,
+    # not pip packages. Skip them when checking imports.
+    local_modules = {Path(f).stem for f in py_files}
 
     for py_file in py_files:
         code = Path(py_file).read_text(errors="replace")
@@ -367,7 +425,7 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
                           "glob", "re", "math", "collections", "functools",
                           "typing", "dataclasses", "argparse", "hashlib",
                           "abc", "io", "copy", "logging", "warnings"}
-                if module not in stdlib:
+                if module not in stdlib and module not in local_modules:
                     imports.append(module)
 
         for module in sorted(set(imports)):
@@ -486,23 +544,61 @@ def _setup_tensorboard(vast, instance_id, timeout=120):
     return tb_url
 
 
-def _cleanup(vast, r2, instance_id, bucket, job_info, job_path, keep_instance=False):
-    """Destroy instance and delete bucket. Optionally keep instance for reuse."""
+def _validate_results(local_results_dir):
+    """Check that at least one non-empty result file exists.
+    Returns (ok: bool, summary: str)."""
+    p = Path(local_results_dir) if local_results_dir else None
+    if not p or not p.exists():
+        return False, f"results dir missing: {local_results_dir}"
+    files = [f for f in p.rglob("*") if f.is_file()]
+    if not files:
+        return False, f"no files in {p}"
+    nonempty = [f for f in files if f.stat().st_size > 0]
+    if not nonempty:
+        return False, f"all {len(files)} files in {p} are 0 bytes"
+    total = sum(f.stat().st_size for f in nonempty)
+    return True, f"{len(nonempty)}/{len(files)} files, {total/1e6:.1f}MB"
+
+
+def _cleanup(vast, r2, instance_id, bucket, job_info, job_path,
+             keep_instance=False, auto_destroy=False, local_results=None):
+    """Destroy instance and delete bucket only if results validated AND
+    auto_destroy is set. Default = keep both for reuse / debugging."""
     if job_info.get("status") == "detached":
         return
-    print("\n  Cleaning up...")
-    if instance_id and not keep_instance:
+
+    print("\n  Cleanup decision...")
+    ok, summary = _validate_results(local_results) if local_results else (False, "no results dir")
+    print(f"  Results validation: {'PASS' if ok else 'FAIL'} - {summary}")
+
+    # Decide what to retain
+    destroy_instance = auto_destroy and ok and not keep_instance
+    delete_bucket    = auto_destroy and ok
+
+    if instance_id and destroy_instance:
         try:
             vast.destroy_instance(instance_id)
+            print(f"  [cleanup] Instance {instance_id} destroyed")
         except Exception as e:
             print(f"  [cleanup] Instance destroy failed: {e}")
-    elif keep_instance and instance_id:
-        print(f"  Instance {instance_id} kept alive (--keep-alive)")
+    elif instance_id:
+        reason = "--keep-alive" if keep_instance else (
+            "results invalid (refuse to destroy)" if not ok else
+            "default (no --auto-destroy); reuse this instance for next experiment")
+        print(f"  Instance {instance_id} RETAINED ({reason})")
+        print(f"    Reuse:   python gpu_runner.py rerun --instance-id {instance_id} --script '...' --data ...")
+        print(f"    Destroy: python gpu_runner.py cleanup --job-id {job_info.get('job_id','?')}")
+
     if bucket and r2:
-        try:
-            r2.delete_bucket(bucket)
-        except Exception as e:
-            print(f"  [cleanup] Bucket delete failed: {e}")
+        if delete_bucket:
+            try:
+                r2.delete_bucket(bucket)
+                print(f"  [cleanup] Bucket {bucket} deleted")
+            except Exception as e:
+                print(f"  [cleanup] Bucket delete failed: {e}")
+        else:
+            reason = "results invalid" if not ok else "default (no --auto-destroy)"
+            print(f"  Bucket {bucket} RETAINED ({reason}); inputs/outputs reusable for next experiment")
     print("  Cleanup complete")
 
 
@@ -917,6 +1013,20 @@ def cleanup_all(args):
             print(f"  Destroyed instance: {inst['id']}")
 
 
+def _fix_python_command(script: str) -> str:
+    """Replace 'python ' with 'python3 ' in script commands.
+
+    vast.ai's vastai/pytorch image only has python3, not python.
+    """
+    import re
+    fixed = re.sub(r'\bpython\b(?!3)', 'python3', script)
+    if fixed != script:
+        print(f"  NOTE: Rewrote 'python' to 'python3' (vast.ai images only have python3)")
+        print(f"  Original: {script}")
+        print(f"  Fixed:    {fixed}")
+    return fixed
+
+
 def main():
     parser = argparse.ArgumentParser(description="GPU2Vast: Run GPU experiments on vast.ai")
     sub = parser.add_subparsers(dest="command")
@@ -940,6 +1050,10 @@ def main():
                         help="Skip local smoke test (not recommended)")
     run_p.add_argument("--results-pattern", default="results/*")
     run_p.add_argument("--local-results", default="./results/")
+    run_p.add_argument("--auto-destroy", action="store_true",
+                        help="After job, destroy instance + delete R2 bucket "
+                             "ONLY IF results validated (non-empty files exist). "
+                             "Default: keep both for reuse / debugging.")
     run_p.set_defaults(func=run_experiment)
 
     # rerun
@@ -971,6 +1085,8 @@ def main():
 
     args = parser.parse_args()
     if args.command:
+        if hasattr(args, "script"):
+            args.script = _fix_python_command(args.script)
         args.func(args)
     else:
         parser.print_help()

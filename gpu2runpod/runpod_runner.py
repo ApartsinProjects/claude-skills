@@ -45,8 +45,25 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 SKILL_DIR = Path(__file__).parent
 KEYS_DIR = SKILL_DIR / "keys"
 JOBS_DIR = SKILL_DIR / "jobs"
+LOGS_DIR = SKILL_DIR / "logs"
 JOBS_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True)
 SSH_KEY = KEYS_DIR / "ssh" / "gpu2runpod_ed25519"
+
+_log_fh = None
+
+
+def _log(msg: str, also_print: bool = True):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    line = f"[{ts}] {msg}"
+    if also_print:
+        _safe_print(line)
+    if _log_fh is not None:
+        try:
+            _log_fh.write(line + "\n")
+            _log_fh.flush()
+        except Exception:
+            pass
 
 CONFIG_PATH = Path.home() / ".config" / "gpu2runpod" / "config.yaml"
 
@@ -107,13 +124,14 @@ def _read_public_key() -> str:
 
 def _safe_print(text: str):
     try:
-        print(text)
+        print(text, flush=True)
     except (UnicodeEncodeError, UnicodeDecodeError):
-        print(text.encode("ascii", errors="replace").decode("ascii"))
+        print(text.encode("ascii", errors="replace").decode("ascii"), flush=True)
 
 
 def run_experiment(args):
     """Full lifecycle: provision storage, launch pod, bootstrap, monitor, download, cleanup."""
+    global _log_fh
     import runpod_manager as rp
     from runpod_storage import RunPodStorage
 
@@ -122,11 +140,15 @@ def run_experiment(args):
     pod_id = None
     storage = None
 
-    print(f"\n{'='*60}")
-    print(f"  GPU2RunPod: {job_id}")
-    print(f"  Script: {args.script}")
-    print(f"  GPU: {args.gpu}, Max: ${args.max_price}/hr, Cloud: {args.cloud}")
-    print(f"{'='*60}\n")
+    log_path = LOGS_DIR / f"{job_id}.log"
+    _log_fh = open(log_path, "w", buffering=1, encoding="utf-8")
+
+    _log(f"{'='*60}")
+    _log(f"  GPU2RunPod: {job_id}")
+    _log(f"  Script: {args.script}")
+    _log(f"  GPU: {args.gpu}, Max: ${args.max_price}/hr, Cloud: {args.cloud}")
+    _log(f"  Log file: {log_path}")
+    _log(f"{'='*60}")
 
     job_info = {
         "job_id": job_id,
@@ -143,24 +165,25 @@ def run_experiment(args):
     job_path.write_text(json.dumps(job_info, indent=2))
 
     if "storage" not in config or not config["storage"].get("volume_id"):
-        print("  ERROR: RunPod storage credentials missing. Check keys/runpod_storage.key")
-        print("  Required JSON fields: endpoint, access_key, secret_key, volume_id")
+        _log("  ERROR: RunPod storage credentials missing. Check keys/runpod_storage.key")
+        _log("  Required JSON fields: endpoint, access_key, secret_key, volume_id")
         return
 
     try:
         # 0. Local smoke test
         if not args.skip_smoke:
-            print("[0/6] Local smoke test (checking imports + dependencies)...")
+            _log("[0/6] Local smoke test (checking imports + dependencies)...")
             if not _local_smoke_test(args.data, args.script):
-                print("  Smoke test FAILED. Fix errors above before running on RunPod.")
-                print("  Use --skip-smoke to bypass (not recommended).")
+                _log("  Smoke test FAILED. Fix errors above before running on RunPod.")
+                _log("  Use --skip-smoke to bypass (not recommended).")
                 job_info["status"] = "smoke_test_failed"
                 job_path.write_text(json.dumps(job_info, indent=2))
                 return
-            print("  Smoke test passed")
+            _log("  Smoke test passed")
 
         # 1. Init storage + upload
-        print("[1/6] Initializing RunPod storage + uploading data...")
+        _log("[1/6] Initializing RunPod storage + uploading data...")
+        t0 = time.time()
         storage = RunPodStorage(config["storage"])
         storage.create_bucket(job_id)
         job_info["storage_job_id"] = job_id
@@ -177,15 +200,16 @@ def run_experiment(args):
             "results_pattern": args.results_pattern,
             "job_id": job_id,
         })
-        print("  Upload complete")
+        _log(f"  Upload complete ({time.time()-t0:.1f}s)")
 
         # 2. Find GPU + pricing
-        print(f"[2/6] Searching for {args.gpu} (<=${args.max_price}/hr, {args.cloud})...")
+        _log(f"[2/6] Searching for {args.gpu} (<=${args.max_price}/hr, {args.cloud})...")
         gpu_info = rp.search_gpu(args.gpu, max_price=args.max_price, cloud_type=args.cloud)
         if not gpu_info:
             raise RuntimeError(f"No {args.gpu} available at <=${args.max_price}/hr ({args.cloud})")
         cloud_type = gpu_info.get("_resolved_cloud_type", args.cloud)
         price = gpu_info.get("_resolved_price", 0)
+        _log(f"  GPU found: {gpu_info.get('displayName', args.gpu)} @ ${price:.3f}/hr ({cloud_type})")
 
         data_size_gb = sum(
             p.stat().st_size for f in args.data
@@ -193,15 +217,15 @@ def run_experiment(args):
         ) / (1024**3)
         est = rp.estimate_cost(gpu_info, args.max_hours * 60, data_gb=max(data_size_gb, 0.01))
         phases = est["phases"]
-        print(f"  ETA: ~{est['total_minutes']:.0f} min total, ~${est['total_cost']:.4f}")
-        print(f"    upload={phases['r2_upload']:.0f}m  boot={phases['pod_boot']:.0f}m  "
+        _log(f"  ETA: ~{est['total_minutes']:.0f} min total, ~${est['total_cost']:.4f}")
+        _log(f"    upload={phases['r2_upload']:.0f}m  boot={phases['pod_boot']:.0f}m  "
               f"setup={phases['setup_and_download']:.0f}m  train={phases['training']:.0f}m  "
               f"fetch={phases['result_download']:.0f}m")
         job_info["estimated_cost"] = est["total_cost"]
         job_info["estimated_minutes"] = est["total_minutes"]
 
         # 3. Create pod
-        print("[3/6] Creating RunPod pod...")
+        _log("[3/6] Creating RunPod pod...")
         _ensure_ssh_key()
         pub_key = _read_public_key()
         hf_token = config.get("hf_token", "")
@@ -241,25 +265,36 @@ def run_experiment(args):
         job_info["pod_id"] = pod_id
         job_info["status"] = "booting"
         job_path.write_text(json.dumps(job_info, indent=2))
-        print(f"  Pod created: {pod_id}")
+        t_pod_created = time.time()
+        _log(f"  Pod created: {pod_id} (image: {docker_image})")
 
         # 4. Wait for boot + SSH health check
-        print("[4/6] Waiting for pod to boot + SSH health check...")
+        _log("[4/6] Waiting for pod to boot + SSH health check...")
+        _log(f"  [timing] pod_created_at={datetime.now().isoformat()}")
+        t_boot_start = time.time()
         if not rp.wait_for_running(pod_id, timeout=300):
             raise RuntimeError(f"Pod {pod_id} failed to enter RUNNING state")
+
+        t_running = time.time()
+        _log(f"  Pod RUNNING after {t_running - t_boot_start:.0f}s")
 
         conn = rp.get_connection_info(pod_id)
         ssh_host = conn["ssh_host"]
         ssh_port = conn["ssh_port"]
-        print(f"  Pod running: ssh root@{ssh_host} -p {ssh_port}")
+        _log(f"  SSH endpoint: {ssh_host}:{ssh_port}")
 
+        t_ssh_start = time.time()
         if not rp.ssh_health_check(ssh_host, ssh_port, str(SSH_KEY)):
             raise RuntimeError(f"SSH health check failed for {ssh_host}:{ssh_port}")
-        print(f"  SSH health check: OK")
+        t_ssh_ok = time.time()
+        _log(f"  SSH health check: OK ({t_ssh_ok - t_ssh_start:.0f}s)")
+        _log(f"  [timing] boot={t_running-t_boot_start:.0f}s  ssh_ready={t_ssh_ok-t_running:.0f}s  total_to_ssh={t_ssh_ok-t_boot_start:.0f}s")
 
         job_info["status"] = "running"
         job_info["ssh_host"] = ssh_host
         job_info["ssh_port"] = ssh_port
+        job_info["boot_seconds"] = round(t_running - t_boot_start)
+        job_info["ssh_ready_seconds"] = round(t_ssh_ok - t_boot_start)
         job_path.write_text(json.dumps(job_info, indent=2))
 
         # Start TensorBoard tunnel in background thread
@@ -277,7 +312,7 @@ def run_experiment(args):
         tb_thread.start()
 
         # 5. Bootstrap: run onstart.sh via SSH in background, tail log
-        print("[5/6] Bootstrapping pod (pip install + storage download + run job)...")
+        _log("[5/6] Bootstrapping pod (pip install + storage download + run job)...")
         bootstrap_cmd = (
             f"pip install -q boto3 2>/dev/null; "
             f"python3 -c \""
@@ -308,7 +343,9 @@ def run_experiment(args):
         )
         if result.returncode != 0:
             raise RuntimeError(f"Bootstrap failed: {result.stderr[:500]}")
-        print(f"  Bootstrap started. Output: {result.stdout.strip()[:200]}")
+        t_bootstrap = time.time()
+        _log(f"  Bootstrap started: {result.stdout.strip()[:200]}")
+        _log(f"  [timing] bootstrap_start={t_bootstrap - t_ssh_ok:.0f}s after SSH")
 
         # Start SSH log streaming in background thread
         log_proc = subprocess.Popen(
@@ -325,7 +362,7 @@ def run_experiment(args):
                 for line in iter(log_proc.stdout.readline, b""):
                     decoded = line.decode("utf-8", errors="replace").rstrip()
                     if decoded:
-                        _safe_print(f"  [pod] {decoded}")
+                        _log(f"[pod] {decoded}")
             except Exception:
                 pass
 
@@ -333,35 +370,38 @@ def run_experiment(args):
         log_thread.start()
 
         # 6. Monitor via storage progress + SSH log stream
-        print("[6/6] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
+        _log("[6/6] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
         monitor_job(storage, job_id, pod_id, args.max_hours)
 
         # 7. Download results
-        print("[7] Downloading results...")
+        _log("[7] Downloading results...")
+        t_dl = time.time()
         downloaded = storage.download_results(job_id, args.local_results)
-        print(f"  Downloaded {len(downloaded)} files to {args.local_results}")
+        _log(f"  Downloaded {len(downloaded)} files to {args.local_results} ({time.time()-t_dl:.1f}s)")
 
         job_info["status"] = "completed"
         job_info["completed_at"] = datetime.now().isoformat()
         job_path.write_text(json.dumps(job_info, indent=2))
 
-        print(f"\n{'='*60}")
-        print(f"  COMPLETE: {job_id}")
-        print(f"  Results: {args.local_results}")
+        _log(f"\n{'='*60}")
+        _log(f"  COMPLETE: {job_id}")
+        _log(f"  Results: {args.local_results}")
         if args.keep_alive and pod_id:
-            print(f"  Pod kept alive: {pod_id}")
-            print(f"  Destroy: python runpod_runner.py cleanup --job-id {job_id}")
-        print(f"{'='*60}")
+            _log(f"  Pod kept alive: {pod_id}")
+            _log(f"  Destroy: python runpod_runner.py cleanup --job-id {job_id}")
+        _log(f"{'='*60}")
 
     except KeyboardInterrupt:
-        print(f"\n  Detached. Job continues on RunPod.")
-        print(f"  Recover: python runpod_runner.py recover --job-id {job_id}")
+        _log(f"\n  Detached. Job continues on RunPod.")
+        _log(f"  Recover: python runpod_runner.py recover --job-id {job_id}")
         job_info["status"] = "detached"
         job_path.write_text(json.dumps(job_info, indent=2))
         return
 
     except Exception as e:
-        print(f"\n  ERROR: {e}")
+        _log(f"\n  ERROR: {e}")
+        import traceback
+        _log(traceback.format_exc(), also_print=False)
         job_info["status"] = "failed"
         job_info["error"] = str(e)
         job_path.write_text(json.dumps(job_info, indent=2))
@@ -372,6 +412,12 @@ def run_experiment(args):
                      keep_pod=getattr(args, "keep_alive", False),
                      auto_destroy=getattr(args, "auto_destroy", False),
                      local_results=getattr(args, "local_results", None))
+        if _log_fh is not None:
+            try:
+                _log_fh.flush()
+                _log_fh.close()
+            except Exception:
+                pass
 
 
 def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
@@ -536,7 +582,15 @@ def _display_progress(progress: dict, elapsed: float):
     parts.append(f"t={mins:.1f}m")
 
     if parts:
-        _safe_print(f"  {' | '.join(parts)}")
+        msg = f"  PROGRESS: {' | '.join(parts)}"
+        _safe_print(msg)
+        if _log_fh is not None:
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            try:
+                _log_fh.write(f"[{ts}] {msg}\n")
+                _log_fh.flush()
+            except Exception:
+                pass
 
 
 def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
@@ -553,7 +607,7 @@ def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
     while True:
         elapsed = time.time() - start
         if elapsed > max_seconds:
-            print(f"\n  TIMEOUT after {max_hours}h")
+            _log(f"\n  TIMEOUT after {max_hours}h")
             break
 
         now = time.time()
@@ -562,29 +616,44 @@ def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
             if done:
                 status = done.get("status", "unknown")
                 exit_code = done.get("exit_code", "?")
-                print(f"\n  Job finished: {status} (exit_code={exit_code}, {int(elapsed)}s)")
+                _log(f"\n  Job finished: status={status} exit_code={exit_code} elapsed={int(elapsed)}s")
+                if _log_fh is not None:
+                    try:
+                        _log_fh.write(f"  done.json: {json.dumps(done)}\n")
+                    except Exception:
+                        pass
                 return
 
             error = storage.get_error(job_id)
             if error:
-                print(f"\n  Job error: {error}")
+                _log(f"\n  Job error: {error}")
                 return
 
             progress = storage.get_progress(job_id)
             if progress:
                 _display_progress(progress, elapsed)
+                # Log recent lines from pod to file
+                if _log_fh is not None and progress.get("recent_lines"):
+                    try:
+                        for rl in progress["recent_lines"]:
+                            _log_fh.write(f"  [recent] {rl}\n")
+                        _log_fh.flush()
+                    except Exception:
+                        pass
                 stale_count = 0
             else:
                 stale_count += 1
+                if stale_count % 6 == 0:
+                    _log(f"  [monitor] no progress for {stale_count * poll_interval}s...", also_print=False)
 
             if stale_count > 0 and stale_count % 12 == 0:
                 alive = rp.is_pod_alive(pod_id)
                 stale_secs = stale_count * poll_interval
                 if not alive:
-                    print(f"\n  Pod {pod_id} is no longer running ({stale_secs}s of no activity)")
+                    _log(f"\n  Pod {pod_id} is no longer running ({stale_secs}s of no activity)")
                     return
                 if stale_count >= 24:
-                    print(f"\n  WARNING: No progress for {stale_secs}s (pod still alive)")
+                    _log(f"\n  WARNING: No progress for {stale_secs}s (pod still alive)")
 
             last_check = now
 
@@ -598,14 +667,14 @@ def _cleanup(pod_id, storage, job_id, job_info, job_path,
 
     import runpod_manager as rp
 
-    print("\n  Cleanup...")
+    _log("\n  Cleanup...")
 
     ok = False
     if local_results and Path(local_results).exists():
         files = [f for f in Path(local_results).rglob("*") if f.is_file() and f.stat().st_size > 0]
         ok = bool(files)
         summary = f"{len(files)} non-empty files" if files else "no files"
-        print(f"  Results validation: {'PASS' if ok else 'FAIL'} - {summary}")
+        _log(f"  Results validation: {'PASS' if ok else 'FAIL'} - {summary}")
 
     destroy_pod = auto_destroy and ok and not keep_pod
     delete_job_data = auto_destroy and ok
@@ -614,28 +683,28 @@ def _cleanup(pod_id, storage, job_id, job_info, job_path,
         if destroy_pod:
             try:
                 rp.terminate_pod(pod_id)
-                print(f"  [cleanup] Pod {pod_id} terminated")
+                _log(f"  [cleanup] Pod {pod_id} terminated")
             except Exception as e:
-                print(f"  [cleanup] Pod terminate failed: {e}")
+                _log(f"  [cleanup] Pod terminate failed: {e}")
         else:
             reason = "--keep-alive" if keep_pod else (
                 "results invalid" if not ok else "default (no --auto-destroy)"
             )
-            print(f"  Pod {pod_id} RETAINED ({reason})")
-            print(f"    Destroy: python runpod_runner.py cleanup --job-id {job_info.get('job_id','?')}")
+            _log(f"  Pod {pod_id} RETAINED ({reason})")
+            _log(f"    Destroy: python runpod_runner.py cleanup --job-id {job_info.get('job_id','?')}")
 
     if storage and job_id:
         if delete_job_data:
             try:
                 storage.delete_job(job_id)
-                print(f"  [cleanup] Storage job prefix {job_id}/ deleted")
+                _log(f"  [cleanup] Storage job prefix {job_id}/ deleted")
             except Exception as e:
-                print(f"  [cleanup] Storage delete failed: {e}")
+                _log(f"  [cleanup] Storage delete failed: {e}")
         else:
             reason = "results invalid" if not ok else "default (no --auto-destroy)"
-            print(f"  Storage prefix {job_id}/ RETAINED ({reason})")
+            _log(f"  Storage prefix {job_id}/ RETAINED ({reason})")
 
-    print("  Cleanup complete")
+    _log("  Cleanup complete")
 
 
 def cmd_status(args):

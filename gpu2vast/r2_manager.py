@@ -135,6 +135,9 @@ class R2Manager:
             def _download_one(item):
                 key, local_path, size = item
                 self.s3.download_file(bucket, key, local_path)
+                actual = Path(local_path).stat().st_size
+                if actual != size:
+                    raise IOError(f"size mismatch for {key}: expected {size}, got {actual}")
                 return local_path, Path(key).name, size
 
             failed_downloads = []
@@ -161,6 +164,9 @@ class R2Manager:
         else:
             for key, local_path, size in to_download:
                 self.s3.download_file(bucket, key, local_path)
+                actual = Path(local_path).stat().st_size
+                if actual != size:
+                    raise IOError(f"size mismatch for {key}: expected {size}, got {actual}")
                 print(f"  [r2] Downloaded: {Path(key).name} ({size:,} bytes)")
                 downloaded.append(local_path)
 

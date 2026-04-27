@@ -9,6 +9,18 @@ ts "Starting job: $JOB_ID"
 ts "Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 || echo unknown)"
 ts "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'detecting...')"
 
+# Pre-flight CUDA driver check (fail fast if PyTorch can't see CUDA)
+if command -v python3 >/dev/null 2>&1 && python3 -c "import torch" 2>/dev/null; then
+    if ! python3 -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+        ts "FATAL: torch present but torch.cuda.is_available() == False"
+        ts "Driver: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo unknown)"
+        ts "Torch CUDA build: $(python3 -c 'import torch; print(torch.version.cuda)' 2>/dev/null)"
+        ts "Aborting before training to avoid silent billing"
+        exit 42
+    fi
+    ts "CUDA preflight OK ($(python3 -c 'import torch; print(torch.version.cuda)'))"
+fi
+
 # 1. Install packages (skip torch if already present to avoid re-downloading CUDA libs)
 ts "Installing packages..."
 T0=$SECONDS

@@ -1,0 +1,18 @@
+{
+  "model": "distilgpt2",
+  "params": 81912576,
+  "device": "cuda",
+  "epochs": 20,
+  "total_steps": 40,
+  "lr": 0.0005,
+  "final_loss": 0.052823975682258606,
+  "eval_loss": 0.019147689919918776,
+  "perplexity": 1.0193321704864502,
+  "elapsed_seconds": 1.914566993713379,
+  "num_texts": 8,
+  "generated_samples": [
+    "The old lighthouse keeper watched the storm roll in from the west.",
+    "Every morning she would walk along the shore collecting sea glass.",
+    "Stars filled the sky like scattered diamonds on dark velvet."
+  ]
+}
