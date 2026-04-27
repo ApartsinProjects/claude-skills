@@ -4,3 +4,9 @@ __pycache__/
 jobs/
 test_data/
 test_results/
+results/
+logs/
+*.safetensors
+*.bin
+*.pt
+*.ckpt
