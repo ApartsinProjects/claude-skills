@@ -1,12 +1,16 @@
 # GPU2RunPod Skill Instructions
 
-This skill runs any GPU training job (fine-tuning, embeddings, inference) on rented RunPod GPUs.
-Framework: PyTorch + Transformers + HuggingFace ecosystem + TensorBoard.
+This skill runs any GPU-intensive deep learning job on rented RunPod GPUs.
+Supported workloads: fine-tuning, pre-training, inference/generation,
+embedding encoding, batch scoring, evaluation, model export/quantization,
+diffusion sampling, multi-modal tasks, and any other PyTorch / HuggingFace
+GPU job.
 Skill location: `C:\Users\apart\Projects\claude-skills\gpu2runpod\`
 
-## Training Script Output Convention
+## Script Output Convention
 
-Training scripts MUST follow this format for real-time monitoring via SSH streaming.
+Scripts MUST follow this format for real-time monitoring via SSH streaming.
+The `[train]` prefix is conventional for all workloads (not just training).
 
 ```python
 import sys
@@ -23,9 +27,9 @@ print(f"[train] Model loaded: {model_name} ({params:,} params) on {device}"); sy
 print("[train] Loading data..."); sys.stdout.flush()
 print(f"[train] Loaded {len(data)} samples"); sys.stdout.flush()
 
-print(f"[train] Training ({total_steps} steps)..."); sys.stdout.flush()
+print(f"[train] Starting ({total_steps} steps)..."); sys.stdout.flush()
 for step in range(1, total_steps + 1):
-    loss = train_step()
+    result = do_work()
     print(f"  {step}/{total_steps} loss={loss:.4f} epoch={epoch}"); sys.stdout.flush()
 
 print(f"[train] Eval: loss={eval_loss:.4f}, accuracy={accuracy:.4f}"); sys.stdout.flush()
@@ -34,29 +38,99 @@ print("[train] === DONE ==="); sys.stdout.flush()
 ```
 
 Rules:
-- **MANDATORY**: `assert torch.cuda.is_available()` at the top, before any model loading.
-- `[train]` prefix on phase markers
-- `step/total loss=X.XXXX` format for training progress
-- `epoch=N` in step lines for epoch tracking
+- **MANDATORY**: `assert torch.cuda.is_available()` at the top, before any model loading
+- `[train]` prefix on phase markers (works for any workload type)
+- `step/total loss=X.XXXX` or `step/total metric=X.XXXX` format per step
 - `sys.stdout.flush()` after EVERY print (SSH log streaming needs unbuffered output)
 - `=== DONE ===` as completion marker
-- Save all results to `results/` directory (only this dir gets uploaded)
+- Save ALL outputs to `results/` directory (only this dir gets uploaded)
 - **MANDATORY**: Use `torch.utils.tensorboard.SummaryWriter(log_dir="runs")` for logging
 
-TensorBoard template:
+TensorBoard template (works for any workload):
 ```python
 from torch.utils.tensorboard import SummaryWriter
 import shutil, os
 writer = SummaryWriter(log_dir="runs")
 writer.add_text("phase", "model_download: loading model", 0); writer.flush()
-# per step:
+# per step (loss, accuracy, score, throughput, etc.):
 writer.add_scalar("train/loss", loss, step)
-# at eval:
-writer.add_scalar("eval/loss", eval_loss, epochs)
+writer.add_scalar("eval/score", score, step)
+# at end:
 writer.close()
 # Copy runs/ into results/ so it gets uploaded:
 os.makedirs("results", exist_ok=True)
 shutil.copytree("runs", "results/tb_runs", dirs_exist_ok=True)
+```
+
+## Workload-Specific Patterns
+
+### Fine-tuning (LoRA / QLoRA)
+```python
+from peft import get_peft_model, LoraConfig
+from trl import SFTTrainer
+# peft + trl + bitsandbytes are pre-installed by onstart.sh
+# If peft conflicts with base torch, use requirements.txt
+```
+
+### Inference / Generation
+```python
+# Batch inference: loop over dataset, collect outputs to results/outputs.jsonl
+# Progress: print step/total after each batch
+import json, pathlib
+out = pathlib.Path("results/outputs.jsonl")
+out.parent.mkdir(exist_ok=True)
+with out.open("w") as f:
+    for step, batch in enumerate(loader, 1):
+        outputs = model.generate(**batch)
+        for item in outputs:
+            f.write(json.dumps(item) + "\n")
+        print(f"  {step}/{total_steps} generated={step * batch_size}"); sys.stdout.flush()
+```
+
+### Embedding Encoding
+```python
+# Encode large corpus, save as numpy or safetensors
+import numpy as np
+embeddings = []
+for step, batch in enumerate(loader, 1):
+    emb = model.encode(batch)
+    embeddings.append(emb)
+    print(f"  {step}/{total_steps} encoded={step * batch_size}"); sys.stdout.flush()
+np.save("results/embeddings.npy", np.vstack(embeddings))
+```
+
+### Model Export / Quantization
+```python
+# ONNX export
+import torch.onnx
+torch.onnx.export(model, dummy_input, "results/model.onnx", ...)
+print("[train] Exported ONNX"); sys.stdout.flush()
+
+# GPTQ / AWQ: use the relevant library; save to results/quantized_model/
+# bitsandbytes is pre-installed; AWQ/GPTQ may need requirements.txt
+```
+
+### Diffusion Sampling
+```python
+from diffusers import StableDiffusionPipeline
+pipe = StableDiffusionPipeline.from_pretrained(...)
+pipe = pipe.to("cuda")
+for step, prompt in enumerate(prompts, 1):
+    image = pipe(prompt).images[0]
+    image.save(f"results/sample_{step:04d}.png")
+    print(f"  {step}/{len(prompts)} sampled"); sys.stdout.flush()
+```
+
+### Batch Scoring / Reranking
+```python
+# Score pairs (query, candidate) with cross-encoder or custom model
+import json
+scores = []
+for step, (q, c) in enumerate(pairs, 1):
+    score = model(q, c)
+    scores.append({"query": q, "candidate": c, "score": float(score)})
+    print(f"  {step}/{total_steps} scored"); sys.stdout.flush()
+json.dump(scores, open("results/scores.json", "w"))
 ```
 
 ## Observability Packages
@@ -67,12 +141,14 @@ boto3 transformers accelerate peft trl bitsandbytes sentence-transformers
 datasets requests tensorboard sentencepiece protobuf pynvml psutil
 ```
 
-Note: if `peft` has dependency conflicts with the base image's torch version, the
-install retries automatically with core packages only (boto3, transformers, accelerate,
-datasets, requests, tensorboard, pynvml, psutil). Training scripts that need peft/trl
-should include a `requirements.txt` in `--data` for reliable installation.
+Note: if `peft` has dependency conflicts with the base image's torch version,
+the install retries automatically with core packages only (boto3, transformers,
+accelerate, datasets, requests, tensorboard, pynvml, psutil). Scripts that
+need peft/trl should include a `requirements.txt` in `--data` for reliable
+installation.
 
-`torch` is skipped if already present in the base image (RunPod pytorch images include it).
+`torch` is skipped if already present in the base image (RunPod pytorch images
+include it).
 
 ## Running a Job
 
@@ -101,9 +177,11 @@ Key flags:
 - `--cloud COMMUNITY`: cheapest tier (default)
 - `--cloud SECURE`: dedicated hardware (more reliable, pricier)
 - `--skip-smoke`: bypass local syntax check (not recommended)
+- `--disk 40`: container disk in GB (increase for large models/datasets)
+- `--max-hours 4`: hard runtime cap to prevent runaway billing
 
-File rename syntax for `--data`: use `local_path:remote_name` to upload a local file
-under a different name on the pod. Example:
+File rename syntax for `--data`: use `local_path:remote_name` to upload a
+local file under a different name on the pod. Example:
 ```bash
 --data my_experiment.py:train.py dataset_v2.json:data.json
 ```
@@ -120,20 +198,21 @@ under a different name on the pod. Example:
 | 4 | SSH health check | 5s | SSH health check: OK |
 | 5 | Bootstrap: source env, pip install, download data | 30-120s | Installing packages... |
 | 5 | TensorBoard starts (background, port 6006) | auto | TensorBoard running on pod:6006 |
-| 5 | Training runs (EXPERIMENT_CMD) | varies | [train] 5/20 loss=0.3456 |
+| 5 | Job runs (EXPERIMENT_CMD) | varies | [train] 5/20 loss=0.3456 |
 | 5 | Results upload to storage (from results/) | 2-30s | Uploaded N files |
 | 6 | Download results locally | 2-30s | Downloaded: model.safetensors |
 | 6 | Terminate pod + cleanup storage | 2s | Cleanup complete |
 
 ## Storage Architecture
 
-RunPod S3 Network Volume is used for all data transfer. Each job gets an isolated prefix:
-`{volume_id}/{job_id}/data/` (input files), `{volume_id}/{job_id}/results/` (outputs).
+RunPod S3 Network Volume is used for all data transfer. Each job gets an
+isolated prefix: `{volume_id}/{job_id}/data/` (input files),
+`{volume_id}/{job_id}/results/` (outputs).
 
-**Important RunPod S3 limitation**: `list_objects_v2` always returns empty (broken API).
-The code works around this by:
+**Important RunPod S3 limitation**: `list_objects_v2` always returns empty
+(broken API). The code works around this by:
 - Using `manifest.json` (written by upload_files) to track uploaded keys
-- Using `done.json["files"]` (written by pod on completion) for result file keys
+- Using `done.json["files"]` (written by pod on completion) for result keys
 - Using `head_object` for existence checks instead of listing
 - `delete_job` rebuilds key list from manifest + done.json + known sentinel keys
 
@@ -156,10 +235,10 @@ The code works around this by:
 
 ## Bootstrap Env Var Sourcing
 
-Docker container env vars are NOT inherited by SSH sessions. The bootstrap and
-`onstart.sh` source them from `/proc/1/environ` using `printf '%q'` to correctly
-quote values with spaces (e.g. `EXPERIMENT_CMD=python3 -u train.py`). If this
-sourcing fails silently, check `/proc/1/environ` on the pod.
+Docker container env vars are NOT inherited by SSH sessions. The bootstrap
+and `onstart.sh` source them from `/proc/1/environ` using `printf '%q'` to
+correctly quote values with spaces (e.g. `EXPERIMENT_CMD=python3 -u train.py`).
+If this sourcing fails silently, check `/proc/1/environ` on the pod.
 
 ## What NOT to Do
 
@@ -168,6 +247,7 @@ sourcing fails silently, check `/proc/1/environ` on the pod.
 - Do NOT forget `sys.stdout.flush()` (SSH log streaming won't show buffered output)
 - Do NOT save results outside `results/` directory (won't be uploaded to storage)
 - Do NOT use TensorFlow (this skill is PyTorch + HuggingFace only)
+- Do NOT assume `list_objects_v2` works on RunPod S3 (always returns empty)
 
 ## Troubleshooting
 
@@ -183,3 +263,5 @@ sourcing fails silently, check `/proc/1/environ` on the pod.
 | "0 files downloaded" | RunPod S3 listing broken | Fixed: manifest.json used for all file lookups. |
 | peft/bitsandbytes conflict | torch version mismatch | Automatic fallback to core packages; use requirements.txt for peft. |
 | Done.json not written | Script exited non-zero + set -e | Fixed: `set +e` wraps eval so done.json always written. |
+| Large outputs (models) slow | Multi-GB upload over S3 | Use `--keep-alive` + manual download via SSH scp if needed. |
+| Out of disk space on pod | Container disk too small | Add `--disk 80` (or higher) to run command. |
