@@ -34,38 +34,45 @@ print("[train] === DONE ==="); sys.stdout.flush()
 ```
 
 Rules:
-- **MANDATORY**: `assert torch.cuda.is_available()` at the top of every script, before any model loading.
+- **MANDATORY**: `assert torch.cuda.is_available()` at the top, before any model loading.
 - `[train]` prefix on phase markers
 - `step/total loss=X.XXXX` format for training progress
 - `epoch=N` in step lines for epoch tracking
 - `sys.stdout.flush()` after EVERY print (SSH log streaming needs unbuffered output)
 - `=== DONE ===` as completion marker
-- Save all results to `results/` directory
+- Save all results to `results/` directory (only this dir gets uploaded)
 - **MANDATORY**: Use `torch.utils.tensorboard.SummaryWriter(log_dir="runs")` for logging
 
-TensorBoard template (same as gpu2vast):
+TensorBoard template:
 ```python
 from torch.utils.tensorboard import SummaryWriter
+import shutil, os
 writer = SummaryWriter(log_dir="runs")
 writer.add_text("phase", "model_download: loading model", 0); writer.flush()
-# ... per step: writer.add_scalar("train/loss", loss, step)
-# ... at eval: writer.add_scalar("eval/loss", eval_loss, epochs)
+# per step:
+writer.add_scalar("train/loss", loss, step)
+# at eval:
+writer.add_scalar("eval/loss", eval_loss, epochs)
 writer.close()
-# Copy to results: shutil.copytree("runs", "results/tb_runs", dirs_exist_ok=True)
+# Copy runs/ into results/ so it gets uploaded:
+os.makedirs("results", exist_ok=True)
+shutil.copytree("runs", "results/tb_runs", dirs_exist_ok=True)
 ```
 
 ## Observability Packages
 
-The onstart.sh installs these packages on the pod:
-`boto3 transformers accelerate peft trl bitsandbytes sentence-transformers datasets
- requests tensorboard sentencepiece protobuf pynvml psutil`
+The `onstart.sh` on the pod installs:
+```
+boto3 transformers accelerate peft trl bitsandbytes sentence-transformers
+datasets requests tensorboard sentencepiece protobuf pynvml psutil
+```
 
-- `pynvml` (nvidia-ml-py3): GPU utilization, memory, temperature, power draw
-- `psutil`: CPU/RAM monitoring
-- `tensorboard`: training metrics
-- `torch.profiler`: built-in CUDA kernel profiling (heavyweight, use manually)
+Note: if `peft` has dependency conflicts with the base image's torch version, the
+install retries automatically with core packages only (boto3, transformers, accelerate,
+datasets, requests, tensorboard, pynvml, psutil). Training scripts that need peft/trl
+should include a `requirements.txt` in `--data` for reliable installation.
 
-Note: `torch` is skipped if already present in the base image.
+`torch` is skipped if already present in the base image (RunPod pytorch images include it).
 
 ## Running a Job
 
@@ -93,7 +100,7 @@ Key flags:
 - `--keep-alive`: keep pod after job (for sequential experiments)
 - `--cloud COMMUNITY`: cheapest tier (default)
 - `--cloud SECURE`: dedicated hardware (more reliable, pricier)
-- `--skip-smoke`: bypass local import check (not recommended)
+- `--skip-smoke`: bypass local syntax check (not recommended)
 
 File rename syntax for `--data`: use `local_path:remote_name` to upload a local file
 under a different name on the pod. Example:
@@ -106,50 +113,73 @@ under a different name on the pod. Example:
 | Step | What | Time | Visible in chat |
 |------|------|------|-----------------|
 | 0 | Local smoke test (syntax + imports) | 2s | import X: OK |
-| 1 | Create R2 bucket | 1s | [r2] Bucket created |
-| 2 | Upload data + scripts to R2 | 1-5s | Uploaded: file.py (1,234 bytes) |
+| 1 | Create storage prefix (RunPod Network Volume) | 1s | Volume accessible |
+| 2 | Upload data + scripts to storage | 1-5s | Uploaded: file.py (1,234 bytes) |
 | 3 | Find GPU type + pricing | 2s | GPU: RTX 4090 @ $0.74/hr |
-| 4 | Create pod + wait for boot | 60-120s | Status: RUNNING |
+| 4 | Create pod + wait for boot | 20-120s | Pod reached RUNNING state in Xs |
 | 4 | SSH health check | 5s | SSH health check: OK |
-| 5 | Bootstrap (pip install + R2 download) | 2-5 min | [GPU2RunPod] Installing packages... |
-| 5 | HF model download (on pod) | 5-30s | [train] Loading model... |
-| 5 | TensorBoard starts (background) | auto | TensorBoard: http://localhost:6006 |
-| 5 | Training runs | varies | [app] 5/20 loss=0.3456 |
-| 5 | Results upload to R2 (on pod) | 5-30s | [app] Uploaded: model.safetensors |
-| 6 | Download results locally | 5-30s | [r2] Downloaded: model.safetensors |
-| 6 | Terminate pod + delete R2 bucket | 2s | Cleanup complete |
+| 5 | Bootstrap: source env, pip install, download data | 30-120s | Installing packages... |
+| 5 | TensorBoard starts (background, port 6006) | auto | TensorBoard running on pod:6006 |
+| 5 | Training runs (EXPERIMENT_CMD) | varies | [train] 5/20 loss=0.3456 |
+| 5 | Results upload to storage (from results/) | 2-30s | Uploaded N files |
+| 6 | Download results locally | 2-30s | Downloaded: model.safetensors |
+| 6 | Terminate pod + cleanup storage | 2s | Cleanup complete |
+
+## Storage Architecture
+
+RunPod S3 Network Volume is used for all data transfer. Each job gets an isolated prefix:
+`{volume_id}/{job_id}/data/` (input files), `{volume_id}/{job_id}/results/` (outputs).
+
+**Important RunPod S3 limitation**: `list_objects_v2` always returns empty (broken API).
+The code works around this by:
+- Using `manifest.json` (written by upload_files) to track uploaded keys
+- Using `done.json["files"]` (written by pod on completion) for result file keys
+- Using `head_object` for existence checks instead of listing
+- `delete_job` rebuilds key list from manifest + done.json + known sentinel keys
 
 ## Pod Lifecycle and Cleanup
 
-- R2 bucket: created per job, deleted after results downloaded (with --auto-destroy)
+- Storage: job prefix created per run, deleted after results downloaded
 - Pod: terminated in `finally` block (success, failure, exception, Ctrl+C)
 - SSH tunnels: cleaned via atexit + SIGTERM
 - Ctrl+C: detaches (pod keeps running, use `recover` to reconnect)
-- `cleanup-all`: sweeps orphaned pods + R2 buckets
+- `cleanup-all`: sweeps orphaned pods + storage prefixes
 
 ## SSH and TensorBoard
 
-- SSH keys auto-generated on first run (`setup_ssh.py`) and injected via PUBLIC_KEY env var
-- SSH health check runs after pod is RUNNING (catches broken hosts in 5s)
-- TensorBoard: auto-starts on pod port 6006, SSH tunnel opened automatically
+- SSH keys auto-generated on first run (ED25519, stored in `keys/ssh/`)
+- PUBLIC_KEY injected as Docker env var, sourced by bootstrap from `/proc/1/environ`
+- SSH health check runs after pod is RUNNING (catches broken hosts in ~5s)
+- TensorBoard: auto-starts on pod port 6006; SSH tunnel opened automatically
 - If tunnel fails, prints manual command: `ssh -p <port> root@<host> -L 6006:localhost:6006`
+- Live pod log streamed via `tail -f /tmp/job.log` over SSH in background thread
+
+## Bootstrap Env Var Sourcing
+
+Docker container env vars are NOT inherited by SSH sessions. The bootstrap and
+`onstart.sh` source them from `/proc/1/environ` using `printf '%q'` to correctly
+quote values with spaces (e.g. `EXPERIMENT_CMD=python3 -u train.py`). If this
+sourcing fails silently, check `/proc/1/environ` on the pod.
 
 ## What NOT to Do
 
 - Do NOT use Unicode/emoji in print statements (crashes Windows cp1252 console)
 - Do NOT use Python 3.14's default `text=True` without `encoding="utf-8", errors="replace"`
 - Do NOT forget `sys.stdout.flush()` (SSH log streaming won't show buffered output)
-- Do NOT save results outside `results/` directory (won't be uploaded to R2)
+- Do NOT save results outside `results/` directory (won't be uploaded to storage)
 - Do NOT use TensorFlow (this skill is PyTorch + HuggingFace only)
 
 ## Troubleshooting
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| "No module named X" | Missing package | Add import to script (smoke test catches it). |
-| Boot timeout | Slow image pull | Pod status polling waits. No action needed. |
-| SSH health check failed | Broken pod | Terminate and retry. |
-| Model weights missing | Saved outside results/ | Save to `results/model/`. |
-| TensorBoard not opening | Unicode crash in URL | Fixed (ASCII-only). Check logs. |
+| "No module named X" | Missing package | Add to `requirements.txt` in `--data`. |
+| Boot timeout (120s stall) | RunPod Community Cloud delay | Re-run; transient availability issue. |
+| SSH health check failed | Broken pod allocation | Terminate pod and retry. |
+| Model weights missing | Saved outside `results/` | Save to `results/model/`. |
+| TensorBoard not opening | Tunnel failed | Use manual SSH tunnel command. |
 | Training output not streaming | Missing flush | Add `sys.stdout.flush()` after every print. |
-| PUBLIC_KEY not injected | Wrong image | Use runpod/pytorch or any RunPod-compatible image. |
+| EXPERIMENT_CMD truncated | Spaces in env var value | Fixed: bootstrap uses `printf '%q'` quoting. |
+| "0 files downloaded" | RunPod S3 listing broken | Fixed: manifest.json used for all file lookups. |
+| peft/bitsandbytes conflict | torch version mismatch | Automatic fallback to core packages; use requirements.txt for peft. |
+| Done.json not written | Script exited non-zero + set -e | Fixed: `set +e` wraps eval so done.json always written. |

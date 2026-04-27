@@ -3,16 +3,17 @@ name: gpu2runpod
 description: >
   Run any GPU-intensive PyTorch training, fine-tuning, encoding, or inference job
   on rented RunPod GPUs (RTX 4090, A100, H100, etc.) with RunPod S3-compatible
-  storage (Network Volumes). Use when local GPU is too small/slow, when a job needs more VRAM than
-  available locally (e.g. RTX 2060 6 GB), when the user explicitly asks to "run on
-  RunPod", "use RunPod", "offload to RunPod", "use a bigger GPU", or "rent a GPU on
-  RunPod". Fully automated provisioning, SSH bootstrap, monitoring, R2 upload/download,
-  and cleanup. Zero ongoing cost (pods terminated after job).
+  Network Volume storage. Use when local GPU is too small/slow, when a job needs
+  more VRAM than available locally (e.g. RTX 2060 6 GB), when the user explicitly
+  asks to "run on RunPod", "use RunPod", "offload to RunPod", "use a bigger GPU",
+  or "rent a GPU on RunPod". Fully automated provisioning, SSH bootstrap,
+  monitoring, storage upload/download, and cleanup. Zero ongoing cost (pods
+  terminated after job).
 ---
 
 # gpu2runpod skill
 
-Self-contained RunPod job runner with ephemeral R2 storage.
+Self-contained RunPod job runner with RunPod S3 Network Volume storage.
 
 ## Setup (already complete on this machine)
 
@@ -20,9 +21,9 @@ Self-contained RunPod job runner with ephemeral R2 storage.
 - Keys at `keys/`:
   - `runpod.key` — RunPod API key (plain text)
   - `runpod_storage.key` — JSON: `{endpoint, access_key, secret_key, volume_id}`
-  - `huggingface.key` — optional
-  - `ssh/` — auto-generated on first run
-- Python deps installed: `runpod`, `boto3`
+  - `huggingface.key` — optional HuggingFace token
+  - `ssh/` — auto-generated ED25519 key pair on first run
+- Python deps installed: `runpod`, `boto3`, `pyyaml`
 
 ## CLI surface
 
@@ -42,17 +43,19 @@ Common flags for `run`:
   --gpu RTX_4090 | A100 | H100               # GPU type
   --max-price 1.00                            # $/hour cap
   --cloud COMMUNITY | SECURE                  # cloud type (COMMUNITY is cheaper)
-  --image runpod/pytorch                      # docker image (default)
+  --image runpod/pytorch                      # docker image (default: auto)
   --keep-alive                                # keep pod after job
   --max-hours 2                               # job-runtime cap
   --disk 40                                   # container disk GB
+  --skip-smoke                                # bypass local syntax check
 ```
 
 ## Training-script output convention (MANDATORY for monitoring)
 
-Same as gpu2vast: `[train]` prefix lines, `step/total loss=X.XXXX` per step,
+`[train]` prefix on phase lines, `step/total loss=X.XXXX` per step,
 `=== DONE ===` on completion. Must `assert torch.cuda.is_available()` at top,
-use `torch.utils.tensorboard.SummaryWriter`, and `sys.stdout.flush()` after every print.
+use `torch.utils.tensorboard.SummaryWriter(log_dir="runs")`, and
+`sys.stdout.flush()` after every print. Save results to `results/`.
 See `CLAUDE.md` for the full template.
 
 ## When to invoke this skill
@@ -66,7 +69,7 @@ See `CLAUDE.md` for the full template.
 
 - Tiny experiments that fit on local GPU in <30 min
 - One-off CPU diagnostics
-- Anything where data sensitivity matters (R2 upload step)
+- Anything where data sensitivity matters (storage upload step)
 
 ## Cost control
 
