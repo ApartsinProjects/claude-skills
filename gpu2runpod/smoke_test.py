@@ -605,6 +605,23 @@ def phase4_e2e(cfg: dict, gpu_type: str = "RTX_3090", keep_pod: bool = False):
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
+def _kill_orphans():
+    """Terminate any leftover smoke pods before starting a new run."""
+    try:
+        import runpod_manager as rp
+        rp._init()
+        import runpod
+        pods = runpod.get_pods() or []
+        orphans = [p for p in pods if (p.get("name", "").startswith("smoke-"))]
+        if orphans:
+            print(f"  [pre-flight] Terminating {len(orphans)} orphaned smoke pod(s)...")
+            for p in orphans:
+                runpod.terminate_pod(p["id"])
+                print(f"    Terminated: {p['id']} ({p.get('name')})")
+    except Exception as e:
+        print(f"  [pre-flight] Orphan check error: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="GPU2RunPod smoke test")
     parser.add_argument("--phases", default="0,1,2,3,4",
@@ -618,6 +635,8 @@ def main():
     phases_to_run = set(int(p) for p in args.phases.split(","))
     print(f"\nGPU2RunPod Smoke Test")
     print(f"Phases: {sorted(phases_to_run)}   GPU: {args.gpu}")
+    if 4 in phases_to_run:
+        _kill_orphans()
 
     cfg = {}
     gpu_info = None
