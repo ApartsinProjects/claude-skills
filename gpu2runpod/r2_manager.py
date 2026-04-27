@@ -7,6 +7,33 @@ import boto3
 import json
 import hashlib
 from pathlib import Path
+from boto3.s3.transfer import TransferConfig
+
+_TRANSFER_CONFIG = TransferConfig(
+    multipart_threshold=64 * 1024 * 1024,
+    multipart_chunksize=32 * 1024 * 1024,
+    max_concurrency=8,
+    use_threads=True,
+)
+
+
+def _stream_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _upload_one_aware(s3, local_path: Path, bucket: str, key: str):
+    md5 = _stream_md5(local_path)
+    if str(local_path).lower().endswith(".sh"):
+        raw = local_path.read_bytes()
+        cleaned = raw.replace(b"\r\n", b"\n")
+        s3.put_object(Bucket=bucket, Key=key, Body=cleaned)
+        return md5, len(cleaned)
+    s3.upload_file(str(local_path), bucket, key, Config=_TRANSFER_CONFIG)
+    return md5, local_path.stat().st_size
 
 
 class R2Manager:
@@ -51,9 +78,8 @@ class R2Manager:
             def _upload_one(item):
                 local_path, remote_name = item
                 key = prefix + remote_name
-                md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
-                self.s3.upload_file(str(local_path), bucket, key)
-                return key, {"size": local_path.stat().st_size, "md5": md5}
+                md5, size = _upload_one_aware(self.s3, local_path, bucket, key)
+                return key, {"size": size, "md5": md5}
 
             failed_uploads = []
             with ThreadPoolExecutor(max_workers=min(8, len(valid_files))) as pool:
@@ -74,19 +100,17 @@ class R2Manager:
                     try:
                         local_path, remote_name = item
                         key = prefix + remote_name
-                        md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
-                        self.s3.upload_file(str(local_path), bucket, key)
-                        manifest[key] = {"size": local_path.stat().st_size, "md5": md5}
+                        md5, size = _upload_one_aware(self.s3, local_path, bucket, key)
+                        manifest[key] = {"size": size, "md5": md5}
                         print(f"  Uploaded (retry): {remote_name}")
                     except Exception as e2:
                         raise RuntimeError(f"Upload failed after retry: {item[1]}: {e2}")
         else:
             for local_path, remote_name in valid_files:
                 key = prefix + remote_name
-                md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
-                self.s3.upload_file(str(local_path), bucket, key)
-                manifest[key] = {"size": local_path.stat().st_size, "md5": md5}
-                print(f"  Uploaded: {remote_name} ({local_path.stat().st_size:,} bytes)")
+                md5, size = _upload_one_aware(self.s3, local_path, bucket, key)
+                manifest[key] = {"size": size, "md5": md5}
+                print(f"  Uploaded: {remote_name} ({size:,} bytes)")
 
         self.s3.put_object(
             Bucket=bucket, Key="manifest.json",
@@ -124,7 +148,7 @@ class R2Manager:
 
             def _download_one(item):
                 key, local_path, size = item
-                self.s3.download_file(bucket, key, local_path)
+                self.s3.download_file(bucket, key, local_path, Config=_TRANSFER_CONFIG)
                 actual = Path(local_path).stat().st_size
                 if actual != size:
                     raise IOError(f"size mismatch for {key}: expected {size}, got {actual}")
@@ -146,14 +170,14 @@ class R2Manager:
             for item in failed:
                 try:
                     key, local_path, size = item
-                    self.s3.download_file(bucket, key, local_path)
+                    self.s3.download_file(bucket, key, local_path, Config=_TRANSFER_CONFIG)
                     print(f"  [r2] Downloaded (retry): {Path(key).name}")
                     downloaded.append(local_path)
                 except Exception as e2:
                     print(f"  [r2] Download failed after retry: {Path(item[0]).name}: {e2}")
         else:
             for key, local_path, size in to_download:
-                self.s3.download_file(bucket, key, local_path)
+                self.s3.download_file(bucket, key, local_path, Config=_TRANSFER_CONFIG)
                 actual = Path(local_path).stat().st_size
                 if actual != size:
                     raise IOError(f"size mismatch for {key}: expected {size}, got {actual}")

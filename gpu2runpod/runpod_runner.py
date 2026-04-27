@@ -25,11 +25,28 @@ _child_processes = []
 
 
 def _cleanup_children():
+    """Kill child SSH/tunnel procs.
+
+    On Windows, .kill() leaves grandchild ssh processes; use taskkill /F /T.
+    On POSIX, prefer killing the process group so all descendants die.
+    """
     for proc in _child_processes:
         try:
-            proc.kill()
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception:
+                    proc.kill()
         except Exception:
-            pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 atexit.register(_cleanup_children)
@@ -104,7 +121,7 @@ def generate_job_id(name: str) -> str:
 def _ensure_ssh_key():
     """Generate SSH key pair if not present."""
     if SSH_KEY.exists():
-        return SSH_KEY.read_text() if False else None  # key exists, no-op
+        return  # key exists, no-op
 
     SSH_KEY.parent.mkdir(parents=True, exist_ok=True)
     print("  Generating SSH key pair for RunPod access...")
@@ -327,6 +344,14 @@ def run_experiment(args):
         )
         bootstrap_cmd = (
             f"{_env_source}; "
+            # Idempotency guard: if a prior bootstrap is still running, do not start another.
+            f"if [ -f /tmp/bootstrap.pid ]; then "
+            f"  _prev=$(cat /tmp/bootstrap.pid 2>/dev/null); "
+            f"  if [ -n \"$_prev\" ] && kill -0 \"$_prev\" 2>/dev/null; then "
+            f"    echo \"BOOTSTRAP_PID:$_prev (already running)\"; "
+            f"    exit 0; "
+            f"  fi; "
+            f"fi; "
             f"echo \"[bootstrap] ENV: ep=$RUNPOD_STORAGE_ENDPOINT vol=$RUNPOD_STORAGE_VOLUME_ID pfx=$RUNPOD_STORAGE_JOB_PREFIX\"; "
             f"pip install -q boto3 2>/dev/null; "
             f"python3 -c \""
@@ -349,7 +374,9 @@ def run_experiment(args):
             f"s3.download_file(vol, pfx+'/onstart.sh', '/tmp/onstart.sh'); "
             f"print('[bootstrap] onstart.sh downloaded OK', file=sys.stderr)\"; "
             f"chmod +x /tmp/onstart.sh; "
-            f"nohup bash /tmp/onstart.sh > /tmp/job.log 2>&1 & echo \"BOOTSTRAP_PID:$!\""
+            f"nohup bash /tmp/onstart.sh > /tmp/job.log 2>&1 & _bp=$!; "
+            f"echo $_bp > /tmp/bootstrap.pid; "
+            f"echo \"BOOTSTRAP_PID:$_bp\""
         )
 
         result = subprocess.run(
@@ -361,7 +388,15 @@ def run_experiment(args):
             timeout=90,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"Bootstrap failed: {result.stderr[:500]}")
+            # Log full stderr to file; truncate only for terminal echo
+            full_err = result.stderr or ""
+            if _log_fh is not None:
+                try:
+                    _log_fh.write(f"  [bootstrap stderr full]\n{full_err}\n")
+                    _log_fh.flush()
+                except Exception:
+                    pass
+            raise RuntimeError(f"Bootstrap failed: {full_err[:500]}")
         t_bootstrap = time.time()
         _log(f"  Bootstrap started: {result.stdout.strip()[:200]}")
         _log(f"  [timing] bootstrap_start={t_bootstrap - t_ssh_ok:.0f}s after SSH")
@@ -390,7 +425,9 @@ def run_experiment(args):
 
         # 6. Monitor via storage progress + SSH log stream
         _log("[6/6] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
-        monitor_job(storage, job_id, pod_id, args.max_hours)
+        monitor_job(storage, job_id, pod_id, args.max_hours,
+                    stale_timeout=getattr(args, "stale_timeout", 600),
+                    ssh_host=ssh_host, ssh_port=ssh_port)
 
         # 7. Download results
         _log("[7] Downloading results...")
@@ -474,17 +511,30 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
                 if module not in stdlib and module not in local_modules:
                     imports.append(module)
 
-        for module in sorted(set(imports)):
+        unique_imports = sorted(set(imports))
+        if unique_imports:
+            # Batch all imports into a single subprocess for speed
+            joined = ", ".join(unique_imports)
             result = sp.run(
-                [sys.executable, "-c", f"import {module}"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                [sys.executable, "-c", f"import {joined}; print('OK')"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             )
             if result.returncode == 0:
-                print(f"  import {module}: OK")
+                for module in unique_imports:
+                    print(f"  import {module}: OK")
             else:
-                err = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown"
-                print(f"  import {module}: MISSING ({err})")
-                return False
+                # Fall back to individual checks to identify the offender
+                for module in unique_imports:
+                    r2 = sp.run(
+                        [sys.executable, "-c", f"import {module}"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                    )
+                    if r2.returncode == 0:
+                        print(f"  import {module}: OK")
+                    else:
+                        err = r2.stderr.strip().split("\n")[-1] if r2.stderr else "unknown"
+                        print(f"  import {module}: MISSING ({err})")
+                        return False
 
     for py_file in py_files:
         code = Path(py_file).read_text(errors="replace")
@@ -612,7 +662,13 @@ def _display_progress(progress: dict, elapsed: float):
                 pass
 
 
-def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
+def monitor_job(storage, job_id: str, pod_id: str, max_hours: float,
+                stale_timeout: int = 600, ssh_host: str = "", ssh_port: int = 0):
+    """Monitor job via storage progress + pod liveness.
+
+    stale_timeout: seconds without progress before pod is hard-killed. Set to
+    a large value (e.g. 36000) to disable the kill behavior.
+    """
     import runpod_manager as rp
 
     start = time.time()
@@ -621,7 +677,7 @@ def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
     last_check = 0
     poll_interval = 5
 
-    print(f"  Polling storage every {poll_interval}s...")
+    print(f"  Polling storage every {poll_interval}s (stale_timeout={stale_timeout}s)...")
 
     while True:
         elapsed = time.time() - start
@@ -645,7 +701,14 @@ def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
 
             error = storage.get_error(job_id)
             if error:
-                _log(f"\n  Job error: {error}")
+                stage = error.get("stage", "?")
+                exit_code = error.get("exit_code", "?")
+                log_tail = error.get("log_tail", "")
+                _log(f"\n  [error.json] Job FAILED at stage={stage} exit_code={exit_code}")
+                if log_tail:
+                    _log(f"  [error.json] last log lines:\n{log_tail[-4000:]}")
+                else:
+                    _log(f"  [error.json] {error}")
                 return
 
             progress = storage.get_progress(job_id)
@@ -673,6 +736,44 @@ def monitor_job(storage, job_id: str, pod_id: str, max_hours: float):
                     return
                 if stale_count >= 24:
                     _log(f"\n  WARNING: No progress for {stale_secs}s (pod still alive)")
+                # Hard kill if stale beyond stale_timeout
+                if stale_secs >= stale_timeout and alive:
+                    _log(f"\n  STALE TIMEOUT ({stale_secs}s >= {stale_timeout}s): grabbing log tail and killing pod")
+                    log_tail = ""
+                    if ssh_host and ssh_port and SSH_KEY.exists():
+                        try:
+                            r = subprocess.run(
+                                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+                                 "-o", "ConnectTimeout=10", "-i", str(SSH_KEY),
+                                 "-p", str(ssh_port), f"root@{ssh_host}",
+                                 "tail -50 /tmp/job.log 2>/dev/null"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=20,
+                            )
+                            log_tail = r.stdout or ""
+                            _log(f"  [stale-kill] last log lines:\n{log_tail}")
+                        except Exception as e:
+                            _log(f"  [stale-kill] failed to fetch log tail: {e}")
+                    # Synthesize error.json sentinel into storage
+                    try:
+                        storage.s3.put_object(
+                            Bucket=storage.volume_id,
+                            Key=f"{job_id}/error.json",
+                            Body=json.dumps({
+                                "stage": "stale-timeout",
+                                "exit_code": -1,
+                                "stale_seconds": stale_secs,
+                                "log_tail": log_tail[-20000:],
+                                "timestamp": time.time(),
+                            }),
+                        )
+                    except Exception as e:
+                        _log(f"  [stale-kill] could not write error.json: {e}")
+                    try:
+                        rp.terminate_pod(pod_id)
+                    except Exception as e:
+                        _log(f"  [stale-kill] terminate_pod failed: {e}")
+                    return
 
             last_check = now
 
@@ -731,12 +832,42 @@ def cmd_status(args):
     if not job_files:
         print("No jobs found.")
         return
-    print(f"\n{'Job ID':<40} {'Status':<15} {'Pod':<25} {'Started'}")
-    print("-" * 100)
+
+    # Try to fetch live pod info to surface LIVE/STOPPED/EXITED/ORPHAN states
+    live_by_id: dict = {}
+    try:
+        import runpod_manager as rp
+        for pod in rp.get_pods() or []:
+            pid = pod.get("id")
+            if pid:
+                live_by_id[pid] = pod.get("desiredStatus", "?")
+    except Exception as e:
+        print(f"  (live pod lookup failed: {e})")
+
+    tracked_ids = set()
+    print(f"\n{'Job ID':<40} {'Status':<15} {'Pod':<25} {'Live':<10} {'Started'}")
+    print("-" * 110)
     for jf in job_files[:20]:
-        info = json.loads(jf.read_text())
+        try:
+            info = json.loads(jf.read_text())
+        except Exception:
+            continue
+        pod_id = info.get("pod_id", "")
+        if pod_id:
+            tracked_ids.add(pod_id)
+        live = live_by_id.get(pod_id, "GONE" if pod_id else "")
+        live_label = {"RUNNING": "LIVE", "EXITED": "EXITED",
+                      "STOPPED": "STOPPED"}.get(live, live)
         print(f"  {info.get('job_id','?'):<38} {info.get('status','?'):<15} "
-              f"{str(info.get('pod_id','')):<25} {info.get('started_at','')[:16]}")
+              f"{str(pod_id):<25} {str(live_label):<10} {info.get('started_at','')[:16]}")
+
+    # ORPHAN row: live pods not tracked in any jobs/*.json
+    orphans = [pid for pid in live_by_id if pid not in tracked_ids]
+    if orphans:
+        print(f"\n  ORPHAN pods (live but not tracked): {len(orphans)}")
+        for pid in orphans:
+            print(f"    {pid}  status={live_by_id[pid]}")
+        print(f"  Use: python orphans.py [--cleanup]")
 
 
 def cmd_recover(args):
@@ -869,7 +1000,13 @@ def main():
     run_p.add_argument("--cloud", default="COMMUNITY", choices=["COMMUNITY", "SECURE"])
     run_p.add_argument("--image", default="auto", help="Docker image (default: runpod/pytorch)")
     run_p.add_argument("--disk", type=int, default=40, help="Container disk GB")
-    run_p.add_argument("--max-hours", type=float, default=6.0, help="Runtime cap in hours")
+    run_p.add_argument("--max-hours", type=float, default=4.0, help="Runtime cap in hours")
+    run_p.add_argument("--stale-timeout", type=int, default=600,
+                       help="Seconds without progress before pod is force-killed (default: 600)")
+    run_p.add_argument("--spot", dest="cloud", action="store_const", const="COMMUNITY",
+                       help="Alias for --cloud COMMUNITY (interruptible/cheap)")
+    run_p.add_argument("--on-demand", dest="cloud", action="store_const", const="SECURE",
+                       help="Alias for --cloud SECURE (dedicated/reliable)")
     run_p.add_argument("--keep-alive", action="store_true", help="Keep pod after job")
     run_p.add_argument("--auto-destroy", action="store_true",
                        help="Auto-terminate pod and delete bucket after success")

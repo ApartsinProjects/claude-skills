@@ -136,8 +136,12 @@ Key flags:
 - Always use `python3 -u` (unbuffered output)
 - `--keep-alive`: keep instance after job (for sequential experiments)
 - `--spot`: use interruptible instances (50-70% cheaper)
+- `--on-demand`: use on-demand instances (default; symmetric to `--spot`)
 - `--skip-smoke`: bypass local import check (not recommended)
 - `--image auto`: always resolves to `vastai/pytorch` (pre-cached, fastest boot)
+- `--max-hours 4`: hard runtime cap (default: 4.0)
+- `--stale-timeout 600`: seconds with no progress before instance is force-killed (default: 600). On stale-kill, an `error.json` sentinel is written to R2 with the last 50 log lines so `monitor_job` returns instead of hanging.
+- `--auto-destroy`: after job, destroy instance + delete R2 bucket ONLY IF results validated (non-empty files). Default: retain both for reuse and debugging.
 
 File rename syntax for `--data`: use `local_path:remote_name` to upload a local file
 under a different name on the instance. Example:

@@ -178,7 +178,10 @@ Key flags:
 - `--cloud SECURE`: dedicated hardware (more reliable, pricier)
 - `--skip-smoke`: bypass local syntax check (not recommended)
 - `--disk 40`: container disk in GB (increase for large models/datasets)
-- `--max-hours 4`: hard runtime cap to prevent runaway billing
+- `--max-hours 4`: hard runtime cap to prevent runaway billing (default: 4.0)
+- `--stale-timeout 600`: seconds with no progress before pod is force-killed (default: 600). On stale-kill, an `error.json` sentinel is uploaded with the last 50 log lines so `monitor_job` returns immediately instead of waiting forever.
+- `--auto-destroy`: after job, terminate pod and delete storage prefix ONLY if results validated (non-empty files exist). Default: keep both for reuse / debugging.
+- `--spot` / `--on-demand`: aliases for `--cloud COMMUNITY` / `--cloud SECURE` (parity with gpu2vast)
 
 File rename syntax for `--data`: use `local_path:remote_name` to upload a
 local file under a different name on the pod. Example:

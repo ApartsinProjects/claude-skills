@@ -14,6 +14,7 @@ import atexit
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 import yaml
@@ -24,18 +25,26 @@ _child_processes = []
 
 
 class _UploadLock:
-    """Serialize concurrent gpu_runner uploads. Bandwidth is shared so two
-    parallel uploads of multi-GB files time out the stale-detector. We hold a
-    skill-wide file lock for the duration of upload_files + upload_config."""
+    """Serialize concurrent gpu_runner uploads when payload is large.
 
-    def __init__(self, lock_dir):
+    Bandwidth is shared so two parallel multi-GB uploads time out the
+    stale-detector. We hold a per-bucket file lock for upload_files +
+    upload_config. Tiny payloads (<50 MB total) skip the lock entirely.
+    """
+
+    def __init__(self, lock_dir, bucket_name: str = "default", total_size_bytes: int = 0):
         from pathlib import Path as _P
-        self.lock_path = _P(lock_dir) / "upload.lock"
+        # Per-bucket lock so two unrelated jobs don't serialize on each other
+        suffix = "".join(c if c.isalnum() else "_" for c in str(bucket_name))[:64]
+        self.lock_path = _P(lock_dir) / f"upload-{suffix}.lock"
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = None
+        self._skip = total_size_bytes < 50 * 1024 * 1024  # <50 MB: no lock needed
 
     def __enter__(self):
         import time, os
+        if self._skip:
+            return self
         waited = 0
         while True:
             try:
@@ -67,6 +76,8 @@ class _UploadLock:
 
     def __exit__(self, *exc):
         import os
+        if self._skip:
+            return
         if self._fd is not None:
             try: os.close(self._fd)
             except Exception: pass
@@ -75,12 +86,28 @@ class _UploadLock:
 
 
 def _cleanup_children():
-    """Kill any SSH tunnel or background processes on exit."""
+    """Kill any SSH tunnel or background processes on exit.
+
+    On Windows, .kill() leaves grandchild ssh processes; use taskkill /F /T.
+    On POSIX, prefer killing the process group so all descendants die.
+    """
     for proc in _child_processes:
         try:
-            proc.kill()
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception:
+                    proc.kill()
         except Exception:
-            pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 atexit.register(_cleanup_children)
 
@@ -93,7 +120,32 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 SKILL_DIR = Path(__file__).parent
 KEYS_DIR = SKILL_DIR / "keys"
 JOBS_DIR = SKILL_DIR / "jobs"
+LOGS_DIR = SKILL_DIR / "logs"
 JOBS_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True)
+
+_log_fh = None
+
+
+def _safe_print(text):
+    """Print text safely on Windows (handles Unicode chars in cp1252)."""
+    try:
+        print(text, flush=True)
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        print(text.encode("ascii", "replace").decode("ascii"), flush=True)
+
+
+def _log(msg: str, also_print: bool = True):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    line = f"[{ts}] {msg}"
+    if also_print:
+        _safe_print(line)
+    if _log_fh is not None:
+        try:
+            _log_fh.write(line + "\n")
+            _log_fh.flush()
+        except Exception:
+            pass
 
 CONFIG_PATH = Path.home() / ".config" / "gpu2vast" / "config.yaml"
 
@@ -132,6 +184,7 @@ def generate_job_id(experiment_name: str) -> str:
 
 def run_experiment(args):
     """Full lifecycle: provision R2, launch vast.ai, monitor, download, cleanup."""
+    global _log_fh
     from r2_manager import R2Manager
     import vastai_manager as vast
 
@@ -141,11 +194,15 @@ def run_experiment(args):
     bucket = None
     r2 = None
 
-    print(f"\n{'='*60}")
-    print(f"  GPU2Vast: {job_id}")
-    print(f"  Script: {args.script}")
-    print(f"  GPU: {args.gpu}, Max: ${args.max_price}/hr")
-    print(f"{'='*60}\n")
+    log_path = LOGS_DIR / f"{job_id}.log"
+    _log_fh = open(log_path, "w", buffering=1, encoding="utf-8")
+
+    _log(f"{'='*60}")
+    _log(f"  GPU2Vast: {job_id}")
+    _log(f"  Script: {args.script}")
+    _log(f"  GPU: {args.gpu}, Max: ${args.max_price}/hr")
+    _log(f"  Log file: {log_path}")
+    _log(f"{'='*60}")
 
     job_info = {
         "job_id": job_id,
@@ -187,9 +244,14 @@ def run_experiment(args):
         bucket = r2.create_bucket(job_id)
         job_info["r2_bucket"] = bucket
 
-        # 2. Upload data + container scripts (serialized via skill-wide lock)
+        # 2. Upload data + container scripts (per-bucket lock; skipped if <50 MB)
         print("[2/7] Uploading data...")
-        with _UploadLock(SKILL_DIR / "jobs"):
+        _total_upload_bytes = sum(
+            p.stat().st_size for f in args.data
+            for p in [_resolve_data_path(f)] if p.exists()
+        )
+        with _UploadLock(SKILL_DIR / "jobs", bucket_name=bucket,
+                         total_size_bytes=_total_upload_bytes):
             r2.upload_files(bucket, args.data)
             container_files = [
                 str(SKILL_DIR / "container" / "onstart.sh"),
@@ -262,18 +324,20 @@ def run_experiment(args):
         if hf_token:
             print(f"  HuggingFace token: loaded (for gated models)")
 
-        # Build bootstrap command: download onstart.sh from R2, then run it
-        r2_endpoint = f"https://{config['r2']['account_id']}.r2.cloudflarestorage.com"
+        # Build bootstrap command: download onstart.sh from R2, then run it.
+        # Read R2 creds from os.environ (env_vars), NOT inlined into the command —
+        # the onstart_cmd is visible in the vast.ai web log viewer.
         onstart_cmd = (
-            f"pip install -q boto3 2>/dev/null; "
-            f"python3 -c \""
-            f"import boto3; "
-            f"s3=boto3.client('s3',endpoint_url='{r2_endpoint}',"
-            f"aws_access_key_id='{config['r2']['access_key']}',"
-            f"aws_secret_access_key='{config['r2']['secret_key']}',"
-            f"region_name='auto'); "
-            f"s3.download_file('{bucket}','onstart.sh','/tmp/onstart.sh')\"; "
-            f"bash /tmp/onstart.sh"
+            "pip install -q boto3 2>/dev/null; "
+            "python3 -c \""
+            "import boto3, os; "
+            "s3=boto3.client('s3',"
+            "endpoint_url=f'https://{os.environ[\\\"R2_ACCOUNT_ID\\\"]}.r2.cloudflarestorage.com',"
+            "aws_access_key_id=os.environ['R2_ACCESS_KEY'],"
+            "aws_secret_access_key=os.environ['R2_SECRET_KEY'],"
+            "region_name='auto'); "
+            "s3.download_file(os.environ['R2_BUCKET'],'onstart.sh','/tmp/onstart.sh')\"; "
+            "bash /tmp/onstart.sh"
         )
 
         # Launch with retry (some hosts have broken GPU/Docker setups)
@@ -317,6 +381,17 @@ def run_experiment(args):
             raise RuntimeError(f"All {max_retries} hosts failed to boot")
         print(f"  Instance {instance_id} is running")
 
+        # SSH health check before bootstrap (parity with gpu2runpod) — catches
+        # broken hosts in ~5s instead of waiting for stale-detect later.
+        if not vast.ssh_health_check(instance_id, timeout=15):
+            print(f"  SSH health check FAILED on instance {instance_id}; destroying")
+            try:
+                vast.destroy_instance(instance_id)
+            except Exception:
+                pass
+            raise RuntimeError(f"SSH health check failed for instance {instance_id}")
+        print(f"  SSH health check: OK")
+
         actual_info = vast.get_instance(instance_id)
         actual_price = actual_info.get("dph_total", 0) if isinstance(actual_info, dict) else 0
         offer_price = offer.get("dph_total", 0)
@@ -346,7 +421,8 @@ def run_experiment(args):
 
         # 6. Monitor via R2 + stream vast.ai logs (starts immediately)
         print("[6/7] Monitoring (Ctrl+C to detach, use 'recover' to reconnect)...")
-        monitor_job(r2, bucket, job_id, instance_id, args.max_hours)
+        monitor_job(r2, bucket, job_id, instance_id, args.max_hours,
+                    stale_timeout=getattr(args, "stale_timeout", 600))
 
         # 7. Download results
         print("[7/7] Downloading results...")
@@ -384,6 +460,12 @@ def run_experiment(args):
                  keep_instance=getattr(args, 'keep_alive', False),
                  auto_destroy=getattr(args, 'auto_destroy', False),
                  local_results=getattr(args, 'local_results', None))
+        if _log_fh is not None:
+            try:
+                _log_fh.flush()
+                _log_fh.close()
+            except Exception:
+                pass
 
 
 def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
@@ -428,18 +510,30 @@ def _local_smoke_test(data_files: list, script_cmd: str) -> bool:
                 if module not in stdlib and module not in local_modules:
                     imports.append(module)
 
-        for module in sorted(set(imports)):
+        unique_imports = sorted(set(imports))
+        if unique_imports:
+            joined = ", ".join(unique_imports)
             result = sp.run(
-                [sys.executable, "-c", f"import {module}"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                [sys.executable, "-c", f"import {joined}; print('OK')"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             )
             if result.returncode == 0:
-                print(f"  import {module}: OK")
+                for module in unique_imports:
+                    print(f"  import {module}: OK")
             else:
-                err = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown"
-                print(f"  import {module}: MISSING ({err})")
-                print(f"  Fix: pip install {module}")
-                return False
+                # Identify offender via individual checks
+                for module in unique_imports:
+                    r2 = sp.run(
+                        [sys.executable, "-c", f"import {module}"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                    )
+                    if r2.returncode == 0:
+                        print(f"  import {module}: OK")
+                    else:
+                        err = r2.stderr.strip().split("\n")[-1] if r2.stderr else "unknown"
+                        print(f"  import {module}: MISSING ({err})")
+                        print(f"  Fix: pip install {module}")
+                        return False
 
     # Check that training scripts use TensorBoard
     for py_file in py_files:
@@ -602,8 +696,12 @@ def _cleanup(vast, r2, instance_id, bucket, job_info, job_path,
     print("  Cleanup complete")
 
 
-def monitor_job(r2, bucket, job_id, instance_id, max_hours):
-    """Poll R2 for progress and stream vast.ai instance logs."""
+def monitor_job(r2, bucket, job_id, instance_id, max_hours, stale_timeout: int = 600):
+    """Poll R2 for progress and stream vast.ai instance logs.
+
+    stale_timeout: seconds with no progress before instance is hard-killed
+    and a synthetic error.json sentinel is written to the bucket.
+    """
     import vastai_manager as vast
 
     start = time.time()
@@ -614,7 +712,7 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
     last_r2_check = 0
     poll_interval = 5
 
-    print(f"  Polling every {poll_interval}s (logs + R2 progress)...")
+    print(f"  Polling every {poll_interval}s (stale_timeout={stale_timeout}s)...")
 
     while True:
         elapsed = time.time() - start
@@ -646,7 +744,14 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
             # Check error
             error = r2.get_error(bucket)
             if error:
-                print(f"\n  Job error: {error}")
+                stage = error.get("stage", "?")
+                exit_code = error.get("exit_code", "?")
+                log_tail = error.get("log_tail", "")
+                print(f"\n  [error.json] Job FAILED at stage={stage} exit_code={exit_code}")
+                if log_tail:
+                    print(f"  [error.json] last log lines:\n{log_tail[-4000:]}")
+                else:
+                    print(f"  [error.json] {error}")
                 _print_final_logs(vast, instance_id, seen_log_lines)
                 return
 
@@ -668,6 +773,30 @@ def monitor_job(r2, bucket, job_id, instance_id, max_hours):
                     return
                 if stale_count >= 18:
                     print(f"\n  WARNING: No progress for {stale_secs}s (instance still alive)")
+                # Hard kill if exceeding stale_timeout
+                if stale_secs >= stale_timeout and alive:
+                    print(f"\n  STALE TIMEOUT ({stale_secs}s >= {stale_timeout}s): grabbing log tail and destroying instance")
+                    log_tail = _ssh_tail_log(vast, instance_id, lines=50) or ""
+                    if log_tail:
+                        print(f"  [stale-kill] last log lines:\n{log_tail}")
+                    try:
+                        r2.s3.put_object(
+                            Bucket=bucket, Key="error.json",
+                            Body=json.dumps({
+                                "stage": "stale-timeout",
+                                "exit_code": -1,
+                                "stale_seconds": stale_secs,
+                                "log_tail": log_tail[-20000:],
+                                "timestamp": time.time(),
+                            }),
+                        )
+                    except Exception as e:
+                        print(f"  [stale-kill] could not write error.json: {e}")
+                    try:
+                        vast.destroy_instance(instance_id)
+                    except Exception as e:
+                        print(f"  [stale-kill] destroy_instance failed: {e}")
+                    return
 
             last_r2_check = now
 
@@ -731,7 +860,10 @@ def _display_progress(progress, elapsed):
         parts.append(f"VRAM={gpu_mem}/{gpu_total}MB")
     parts.append(f"{mins:.0f}min")
 
-    _safe_print(f"\r  {'  '.join(parts)}    ")
+    # Use \r only when stdout is a TTY; otherwise \r corrupts log files and
+    # interleaves badly with [pod] lines in Git-Bash.
+    _sep = "\r" if sys.stdout.isatty() else "\n"
+    _safe_print(f"{_sep}  {'  '.join(parts)}    ")
 
     # Show recent log lines if available
     recent = progress.get("recent_lines", [])
@@ -742,14 +874,6 @@ def _display_progress(progress, elapsed):
                 _safe_print(f"    {line}")
 
 _display_progress._shown = set()
-
-
-def _safe_print(text):
-    """Print text safely on Windows (handles Unicode chars in cp1252)."""
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        print(text.encode("ascii", "replace").decode())
 
 
 def _stream_logs(vast, instance_id, seen_lines, elapsed_s):
@@ -816,10 +940,48 @@ def _print_final_logs(vast, instance_id, seen_lines):
 
 
 def show_status(args):
-    """Show all jobs."""
+    """Show all jobs with LIVE/STOPPED/EXITED/ORPHAN merged from vast.ai."""
+    live_by_id: dict = {}
+    try:
+        import vastai_manager as vast
+        raw = vast.list_instances()
+        if isinstance(raw, dict):
+            raw = raw.get("instances", [])
+        for inst in raw or []:
+            try:
+                live_by_id[int(inst.get("id"))] = inst.get("actual_status", "?")
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"  (live instance lookup failed: {e})")
+
+    tracked_ids = set()
+    print(f"  {'Job ID':<40} {'Status':<12} {'GPU':<14} {'Live':<10}")
+    print("  " + "-" * 80)
     for job_file in sorted(JOBS_DIR.glob("*.json")):
-        info = json.loads(job_file.read_text())
-        print(f"  {info['job_id']:40s} {info.get('status', '?'):12s} {info.get('gpu', '?')}")
+        try:
+            info = json.loads(job_file.read_text())
+        except Exception:
+            continue
+        iid_raw = info.get("instance_id")
+        try:
+            iid_int = int(iid_raw) if iid_raw is not None else None
+        except Exception:
+            iid_int = None
+        if iid_int is not None:
+            tracked_ids.add(iid_int)
+        live = live_by_id.get(iid_int, "GONE" if iid_int else "")
+        live_label = {"running": "LIVE", "exited": "EXITED",
+                      "stopped": "STOPPED"}.get(str(live).lower(), str(live))
+        print(f"  {info.get('job_id','?'):<40} {info.get('status','?'):<12} "
+              f"{info.get('gpu','?'):<14} {live_label:<10}")
+
+    orphans = [iid for iid in live_by_id if iid not in tracked_ids]
+    if orphans:
+        print(f"\n  ORPHAN instances (live but not tracked): {len(orphans)}")
+        for iid in orphans:
+            print(f"    {iid}  status={live_by_id[iid]}")
+        print(f"  Use: python orphans.py [--cleanup]")
 
 
 def recover_job(args):
@@ -939,7 +1101,14 @@ def rerun_experiment(args):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode != 0:
-            print(f"  ERROR: Data download failed: {result.stderr[:200]}")
+            full_err = result.stderr or ""
+            if _log_fh is not None:
+                try:
+                    _log_fh.write(f"  [rerun data download stderr full]\n{full_err}\n")
+                    _log_fh.flush()
+                except Exception:
+                    pass
+            print(f"  ERROR: Data download failed: {full_err[:200]}")
             r2.delete_bucket(bucket)
             return
         print(f"  Data ready on instance")
@@ -1038,12 +1207,16 @@ def main():
     run_p.add_argument("--name", default="experiment", help="Job name")
     run_p.add_argument("--gpu", default="RTX_4090", help="GPU type")
     run_p.add_argument("--max-price", type=float, default=0.50, help="Max $/hr")
-    run_p.add_argument("--max-hours", type=float, default=2, help="Max runtime hours")
+    run_p.add_argument("--max-hours", type=float, default=4.0, help="Max runtime hours")
+    run_p.add_argument("--stale-timeout", type=int, default=600,
+                        help="Seconds without progress before instance is force-killed (default: 600)")
     run_p.add_argument("--disk", type=int, default=30, help="Disk GB")
     run_p.add_argument("--image", default="auto",
                         help="Docker image ('auto' selects based on script imports)")
     run_p.add_argument("--spot", action="store_true",
                         help="Use spot/interruptible instances (50-70%% cheaper)")
+    run_p.add_argument("--on-demand", dest="spot", action="store_false",
+                        help="Use on-demand instances (default)")
     run_p.add_argument("--keep-alive", action="store_true",
                         help="Keep instance alive after job (for rerun)")
     run_p.add_argument("--skip-smoke", action="store_true",

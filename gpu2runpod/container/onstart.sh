@@ -1,5 +1,53 @@
 #!/bin/bash
 # GPU2RunPod On-Start Script for RunPod pods (uses RunPod S3-compatible storage)
+
+# STAGE marker: updated at each section. If trap fires before STAGE=complete,
+# we upload an error.json sentinel + log tail so monitor_job sees the failure
+# instead of silently waiting forever.
+STAGE="init"
+
+_emit_error_sentinel() {
+    local exit_code=$?
+    if [ "$STAGE" = "complete" ]; then
+        return
+    fi
+    echo "[GPU2RunPod] TRAP: stage=$STAGE exit_code=$exit_code, uploading error.json" >&2
+    # Best-effort: capture last 200 lines of job log
+    local log_tail=""
+    if [ -f /tmp/job.log ]; then
+        log_tail=$(tail -200 /tmp/job.log 2>/dev/null || echo "")
+    fi
+    python3 - <<PYEOF 2>/dev/null || true
+import boto3, json, os, re, time
+from botocore.config import Config
+ep = os.environ.get('RUNPOD_STORAGE_ENDPOINT', '')
+vol = os.environ.get('RUNPOD_STORAGE_VOLUME_ID', '')
+pfx = os.environ.get('RUNPOD_STORAGE_JOB_PREFIX', '')
+if not (ep and vol and pfx):
+    raise SystemExit(0)
+m = re.search(r's3api-([a-z0-9-]+)\.runpod\.io', ep)
+region = m.group(1) if m else 'us-ks-2'
+s3 = boto3.client('s3', endpoint_url=ep,
+    aws_access_key_id=os.environ.get('RUNPOD_STORAGE_ACCESS_KEY', ''),
+    aws_secret_access_key=os.environ.get('RUNPOD_STORAGE_SECRET_KEY', ''),
+    region_name=region,
+    config=Config(retries={'max_attempts': 3}, s3={'addressing_style': 'path'}))
+log_tail = """${log_tail//\"/\\\"}"""
+s3.put_object(Bucket=vol, Key=f'{pfx}/error.json', Body=json.dumps({
+    'stage': '${STAGE}',
+    'exit_code': ${exit_code},
+    'log_tail': log_tail[-20000:],
+    'timestamp': time.time(),
+}))
+try:
+    if os.path.exists('/tmp/job.log'):
+        s3.upload_file('/tmp/job.log', vol, f'{pfx}/logs/job.log')
+except Exception:
+    pass
+PYEOF
+}
+trap _emit_error_sentinel EXIT
+
 set -eo pipefail
 
 # Source Docker container env vars — not inherited by SSH sessions
@@ -37,6 +85,7 @@ if command -v python3 >/dev/null 2>&1 && python3 -c "import torch" 2>/dev/null; 
 fi
 
 # 1. Install packages
+STAGE="install"
 ts "Installing packages..."
 T0=$SECONDS
 EXTRA_PKGS="boto3 transformers accelerate peft trl bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf pynvml psutil"
@@ -70,6 +119,7 @@ if token:
 fi
 
 # 3. Download data from RunPod storage
+STAGE="download"
 ts "Downloading data from RunPod storage..."
 T0=$SECONDS
 python3 -c "
@@ -214,6 +264,7 @@ mkdir -p /root/data/runs
 nohup tensorboard --logdir=/root/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 &
 
 # 8. Run experiment
+STAGE="training"
 ts "Running: $EXPERIMENT_CMD"
 T0=$SECONDS
 cd /root/data
@@ -228,6 +279,7 @@ ts "Training finished (exit=$EXIT_CODE, ${SECONDS}s total, $((SECONDS - T0))s tr
 [ -n "$OBSERVER_PID" ] && kill $OBSERVER_PID 2>/dev/null || true
 
 # 10. Upload results to RunPod storage
+STAGE="upload"
 ts "Uploading results to RunPod storage..."
 T0=$SECONDS
 python3 -c "
@@ -277,4 +329,5 @@ s3.put_object(Bucket=volume_id, Key=f'{job_prefix}/done.json', Body=json.dumps({
 }))
 print(f'[GPU2RunPod] Uploaded {len(uploaded)} files ({total_bytes:,} bytes) in {elapsed:.1f}s ({speed:.1f} MB/s)')
 "
+STAGE="complete"
 ts "ALL DONE (total ${SECONDS}s)"

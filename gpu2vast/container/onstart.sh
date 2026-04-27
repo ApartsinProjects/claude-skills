@@ -1,9 +1,56 @@
 #!/bin/bash
 # GPU2Vast On-Start Script for vast.ai instances
+
+# STAGE marker for trap-based error sentinel: each section updates STAGE.
+# If trap fires before STAGE=complete, an error.json is uploaded to R2 with
+# the stage, exit code, and last 200 lines of the job log.
+STAGE="init"
+
+_emit_error_sentinel() {
+    local exit_code=$?
+    if [ "$STAGE" = "complete" ]; then
+        return
+    fi
+    echo "[GPU2Vast] TRAP: stage=$STAGE exit_code=$exit_code, uploading error.json" >&2
+    local log_tail=""
+    if [ -f /tmp/job.log ]; then
+        log_tail=$(tail -200 /tmp/job.log 2>/dev/null || echo "")
+    elif [ -f /workspace/stdout.log ]; then
+        log_tail=$(tail -200 /workspace/stdout.log 2>/dev/null || echo "")
+    fi
+    python3 - <<PYEOF 2>/dev/null || true
+import boto3, json, os, time
+acc = os.environ.get('R2_ACCOUNT_ID', '')
+ak = os.environ.get('R2_ACCESS_KEY', '')
+sk = os.environ.get('R2_SECRET_KEY', '')
+bucket = os.environ.get('R2_BUCKET', '')
+if not (acc and ak and sk and bucket):
+    raise SystemExit(0)
+s3 = boto3.client('s3',
+    endpoint_url=f'https://{acc}.r2.cloudflarestorage.com',
+    aws_access_key_id=ak, aws_secret_access_key=sk, region_name='auto')
+log_tail = """${log_tail//\"/\\\"}"""
+s3.put_object(Bucket=bucket, Key='error.json', Body=json.dumps({
+    'stage': '${STAGE}',
+    'exit_code': ${exit_code},
+    'log_tail': log_tail[-20000:],
+    'timestamp': time.time(),
+}))
+try:
+    for src in ('/tmp/job.log', '/workspace/stdout.log'):
+        if os.path.exists(src):
+            s3.upload_file(src, bucket, 'logs/job.log')
+            break
+except Exception:
+    pass
+PYEOF
+}
+trap _emit_error_sentinel EXIT
+
 set -eo pipefail
 
 SECONDS=0
-ts() { echo "[GPU2Vast] [${SECONDS}s] $1"; }
+ts() { echo "[GPU2Vast] [${SECONDS}s] $1" | tee -a /tmp/job.log; }
 
 ts "Starting job: $JOB_ID"
 ts "Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 || echo unknown)"
@@ -22,6 +69,7 @@ if command -v python3 >/dev/null 2>&1 && python3 -c "import torch" 2>/dev/null; 
 fi
 
 # 1. Install packages (skip torch if already present to avoid re-downloading CUDA libs)
+STAGE="install"
 ts "Installing packages..."
 T0=$SECONDS
 EXTRA_PKGS="boto3 transformers accelerate peft trl bitsandbytes sentence-transformers datasets requests tensorboard sentencepiece protobuf"
@@ -55,6 +103,7 @@ if token:
 fi
 
 # 3. Download data from R2
+STAGE="download"
 ts "Downloading data from R2..."
 T0=$SECONDS
 python3 -c "
@@ -114,6 +163,7 @@ mkdir -p /workspace/data/runs
 nohup tensorboard --logdir=/workspace/data/runs --host=0.0.0.0 --port=6006 > /dev/null 2>&1 &
 
 # 7. Run experiment
+STAGE="training"
 ts "Running: $EXPERIMENT_CMD"
 T0=$SECONDS
 cd /workspace/data
@@ -125,6 +175,7 @@ ts "Training finished (exit=$EXIT_CODE, ${SECONDS}s total, $((SECONDS - T0))s tr
 [ -n "$REPORTER_PID" ] && kill $REPORTER_PID 2>/dev/null || true
 
 # 9. Upload results
+STAGE="upload"
 ts "Uploading results to R2..."
 T0=$SECONDS
 python3 -c "
@@ -166,4 +217,5 @@ s3.put_object(Bucket=bucket, Key='done.json', Body=json.dumps({
 }))
 print(f'[GPU2Vast] Uploaded {len(uploaded)} files ({total_bytes:,} bytes) in {elapsed:.1f}s ({speed:.1f} MB/s)')
 "
+STAGE="complete"
 ts "ALL DONE (total ${SECONDS}s)"

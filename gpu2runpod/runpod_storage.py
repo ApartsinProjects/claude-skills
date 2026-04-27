@@ -27,6 +27,26 @@ from pathlib import Path
 
 import boto3
 from botocore.config import Config
+from boto3.s3.transfer import TransferConfig
+
+# Tuned for >300 MB single-PUT 524s: switch boto3 to multipart at 64 MB,
+# 32 MB chunks, 8 parallel parts. Per-part retries inherit from the s3 client's
+# retry Config (set in __init__).
+_TRANSFER_CONFIG = TransferConfig(
+    multipart_threshold=64 * 1024 * 1024,
+    multipart_chunksize=32 * 1024 * 1024,
+    max_concurrency=8,
+    use_threads=True,
+)
+
+
+def _stream_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Compute md5 by streaming chunks (avoids reading whole file into RAM)."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class RunPodStorage:
@@ -113,9 +133,21 @@ class RunPodStorage:
         def _upload_one(item):
             local_path, remote_name = item
             key = f"{job_id}/{prefix}{remote_name}"
-            md5 = hashlib.md5(local_path.read_bytes()).hexdigest()
-            self.s3.upload_file(str(local_path), self.volume_id, key)
-            return key, {"size": local_path.stat().st_size, "md5": md5}
+            md5 = _stream_md5(local_path)
+            # Strip CRLF from shell scripts uploaded from Windows: bash on Linux
+            # chokes on \r\n. Read binary, replace, upload via put_object.
+            if str(local_path).lower().endswith(".sh"):
+                raw = local_path.read_bytes()
+                cleaned = raw.replace(b"\r\n", b"\n")
+                self.s3.put_object(Bucket=self.volume_id, Key=key, Body=cleaned)
+                size = len(cleaned)
+            else:
+                self.s3.upload_file(
+                    str(local_path), self.volume_id, key,
+                    Config=_TRANSFER_CONFIG,
+                )
+                size = local_path.stat().st_size
+            return key, {"size": size, "md5": md5}
 
         if parallel and len(valid_files) > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -231,7 +263,9 @@ class RunPodStorage:
 
         def _dl(item):
             key, local_path, size = item
-            self.s3.download_file(self.volume_id, key, local_path)
+            self.s3.download_file(
+                self.volume_id, key, local_path, Config=_TRANSFER_CONFIG,
+            )
             actual = Path(local_path).stat().st_size
             if actual != size:
                 raise IOError(f"size mismatch for {key}: expected {size}, got {actual}")
