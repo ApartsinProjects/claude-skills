@@ -313,22 +313,41 @@ def run_experiment(args):
 
         # 5. Bootstrap: run onstart.sh via SSH in background, tail log
         _log("[5/6] Bootstrapping pod (pip install + storage download + run job)...")
+        # Source container env vars (Docker envs not inherited by SSH sessions)
+        _env_source = (
+            "_tmpenv=$(mktemp); "
+            "while IFS= read -r -d '' _e; do "
+            "_k=\"${_e%%=*}\"; _v=\"${_e#*=}\"; "
+            "case \"$_k\" in "
+            "RUNPOD_STORAGE*|JOB_ID|EXPERIMENT_CMD|RESULTS_PATTERN|HF_TOKEN|HUGGING_FACE*|PUBLIC_KEY) "
+            "printf 'export %s=%q\\n' \"$_k\" \"$_v\" >> \"$_tmpenv\";; "
+            "esac; "
+            "done < /proc/1/environ; "
+            "source \"$_tmpenv\"; rm -f \"$_tmpenv\""
+        )
         bootstrap_cmd = (
+            f"{_env_source}; "
+            f"echo \"[bootstrap] ENV: ep=$RUNPOD_STORAGE_ENDPOINT vol=$RUNPOD_STORAGE_VOLUME_ID pfx=$RUNPOD_STORAGE_JOB_PREFIX\"; "
             f"pip install -q boto3 2>/dev/null; "
             f"python3 -c \""
-            f"import boto3, os, re; "
+            f"import boto3, os, re, sys; "
             f"from botocore.config import Config; "
-            f"ep=os.environ['RUNPOD_STORAGE_ENDPOINT']; "
+            f"ep=os.environ.get('RUNPOD_STORAGE_ENDPOINT',''); "
+            f"vol=os.environ.get('RUNPOD_STORAGE_VOLUME_ID',''); "
+            f"pfx=os.environ.get('RUNPOD_STORAGE_JOB_PREFIX',''); "
+            f"print(f'[bootstrap] ep={{ep}} vol={{vol}} pfx={{pfx}}', file=sys.stderr); "
+            f"assert ep and vol and pfx, f'Missing env: ep={{ep!r}} vol={{vol!r}} pfx={{pfx!r}}'; "
             f"m=re.search(r's3api-([a-z0-9-]+)\\\\.runpod\\\\.io',ep); "
             f"region=m.group(1) if m else 'us-ks-2'; "
             f"s3=boto3.client('s3',endpoint_url=ep,"
             f"aws_access_key_id=os.environ['RUNPOD_STORAGE_ACCESS_KEY'],"
             f"aws_secret_access_key=os.environ['RUNPOD_STORAGE_SECRET_KEY'],"
             f"region_name=region,"
-            f"config=Config(retries={{'max_attempts':5}})); "
+            f"config=Config(retries={{'max_attempts':5}},s3={{'addressing_style':'path'}})); "
             f"vol=os.environ['RUNPOD_STORAGE_VOLUME_ID']; "
             f"pfx=os.environ['RUNPOD_STORAGE_JOB_PREFIX']; "
-            f"s3.download_file(vol, pfx+'/onstart.sh', '/tmp/onstart.sh')\"; "
+            f"s3.download_file(vol, pfx+'/onstart.sh', '/tmp/onstart.sh'); "
+            f"print('[bootstrap] onstart.sh downloaded OK', file=sys.stderr)\"; "
             f"chmod +x /tmp/onstart.sh; "
             f"nohup bash /tmp/onstart.sh > /tmp/job.log 2>&1 & echo \"BOOTSTRAP_PID:$!\""
         )

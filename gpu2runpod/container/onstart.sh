@@ -2,10 +2,25 @@
 # GPU2RunPod On-Start Script for RunPod pods (uses RunPod S3-compatible storage)
 set -eo pipefail
 
+# Source Docker container env vars — not inherited by SSH sessions
+if [ -f /proc/1/environ ]; then
+    _tmpenv=$(mktemp)
+    while IFS= read -r -d '' _e; do
+        _k="${_e%%=*}"; _v="${_e#*=}"
+        case "$_k" in
+            RUNPOD_STORAGE*|JOB_ID|EXPERIMENT_CMD|RESULTS_PATTERN|HF_TOKEN|HUGGING_FACE*|PUBLIC_KEY)
+                printf 'export %s=%q\n' "$_k" "$_v" >> "$_tmpenv" ;;
+        esac
+    done < /proc/1/environ
+    source "$_tmpenv"
+    rm -f "$_tmpenv"
+fi
+
 SECONDS=0
-ts() { echo "[GPU2RunPod] [${SECONDS}s] $1"; }
+ts() { echo "[GPU2RunPod] [${SECONDS}s] $1" | tee -a /tmp/job.log; }
 
 ts "Starting job: $JOB_ID"
+ts "ENV: ep=$RUNPOD_STORAGE_ENDPOINT vol=$RUNPOD_STORAGE_VOLUME_ID pfx=$RUNPOD_STORAGE_JOB_PREFIX"
 ts "Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 || echo unknown)"
 ts "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'detecting...')"
 
@@ -34,7 +49,11 @@ else
     CONSTRAINT=""
     ts "torch not in base image, will install"
 fi
-pip install -q $CONSTRAINT $EXTRA_PKGS
+pip install -q $CONSTRAINT $EXTRA_PKGS 2>&1 || {
+    ts "WARNING: pip install had dependency conflicts, retrying core packages only"
+    CORE_PKGS="boto3 transformers accelerate datasets requests tensorboard pynvml psutil"
+    pip install -q $CONSTRAINT $CORE_PKGS 2>&1 || ts "WARNING: some packages failed to install (non-fatal)"
+}
 ts "Packages installed ($((SECONDS - T0))s)"
 
 # 2. HuggingFace token
@@ -54,7 +73,7 @@ fi
 ts "Downloading data from RunPod storage..."
 T0=$SECONDS
 python3 -c "
-import boto3, os, time
+import boto3, json, os, time
 from pathlib import Path
 from botocore.config import Config
 
@@ -70,7 +89,7 @@ s3 = boto3.client('s3',
     aws_access_key_id=os.environ['RUNPOD_STORAGE_ACCESS_KEY'],
     aws_secret_access_key=os.environ['RUNPOD_STORAGE_SECRET_KEY'],
     region_name=region,
-    config=Config(retries={'max_attempts': 5}, read_timeout=3600, connect_timeout=30))
+    config=Config(retries={'max_attempts': 5}, read_timeout=3600, connect_timeout=30, s3={'addressing_style': 'path'}))
 
 volume_id = os.environ['RUNPOD_STORAGE_VOLUME_ID']
 job_prefix = os.environ['RUNPOD_STORAGE_JOB_PREFIX']
@@ -79,20 +98,84 @@ prefix = f'{job_prefix}/data/'
 count = 0
 total_bytes = 0
 t0 = time.time()
-for page in s3.get_paginator('list_objects_v2').paginate(Bucket=volume_id, Prefix=prefix):
-    for obj in page.get('Contents', []):
-        key = obj['Key']
-        local = ws / key.replace(prefix, '', 1)
+
+# Try manifest.json first — list_objects_v2 is broken on RunPod S3 (always returns empty)
+manifest_keys = []
+try:
+    resp = s3.get_object(Bucket=volume_id, Key=f'{job_prefix}/manifest.json')
+    manifest = json.loads(resp['Body'].read())
+    manifest_keys = [k for k in manifest.keys() if k.startswith(prefix)]
+    print(f'  [data] Using manifest.json ({len(manifest_keys)} data files)')
+except Exception as e:
+    print(f'  [data] manifest.json unavailable ({e}), trying listing')
+
+if manifest_keys:
+    for key in manifest_keys:
+        local_name = key[len(prefix):]
+        if not local_name:
+            continue
+        local = ws / local_name
         local.parent.mkdir(parents=True, exist_ok=True)
         s3.download_file(volume_id, key, str(local))
+        size = os.path.getsize(str(local))
         count += 1
-        total_bytes += obj['Size']
-        print(f'  {key} ({obj[\"Size\"]:,} bytes)')
+        total_bytes += size
+        print(f'  {key} ({size:,} bytes)')
+else:
+    # Fall back to listing (may return empty on RunPod S3)
+    token = None
+    seen_tokens = set()
+    while True:
+        kwargs = {'Bucket': volume_id, 'Prefix': prefix, 'MaxKeys': 1000}
+        if token:
+            kwargs['ContinuationToken'] = token
+        resp = s3.list_objects_v2(**kwargs)
+        for obj in resp.get('Contents', []):
+            key = obj['Key']
+            local = ws / key.replace(prefix, '', 1)
+            local.parent.mkdir(parents=True, exist_ok=True)
+            s3.download_file(volume_id, key, str(local))
+            count += 1
+            total_bytes += obj['Size']
+            print(f'  {key} ({obj[\"Size\"]:,} bytes)')
+        if not resp.get('IsTruncated'):
+            break
+        next_token = resp.get('NextContinuationToken')
+        if not next_token or next_token in seen_tokens:
+            break
+        seen_tokens.add(next_token)
+        token = next_token
 elapsed = time.time() - t0
 speed = total_bytes / elapsed / 1024 / 1024 if elapsed > 0 else 0
 print(f'[GPU2RunPod] Downloaded {count} files ({total_bytes:,} bytes) in {elapsed:.1f}s ({speed:.1f} MB/s)')
 "
 ts "Data download complete ($((SECONDS - T0))s)"
+
+# 3b. Download container helper scripts from job root (not data/ prefix)
+python3 -c "
+import boto3, os
+from botocore.config import Config
+import re as _re
+endpoint = os.environ['RUNPOD_STORAGE_ENDPOINT']
+m = _re.search(r's3api-([a-z0-9-]+)\.runpod\.io', endpoint)
+region = m.group(1) if m else 'us-ks-2'
+s3 = boto3.client('s3',
+    endpoint_url=endpoint,
+    aws_access_key_id=os.environ['RUNPOD_STORAGE_ACCESS_KEY'],
+    aws_secret_access_key=os.environ['RUNPOD_STORAGE_SECRET_KEY'],
+    region_name=region,
+    config=Config(retries={'max_attempts': 5}, s3={'addressing_style': 'path'}))
+volume_id = os.environ['RUNPOD_STORAGE_VOLUME_ID']
+job_prefix = os.environ['RUNPOD_STORAGE_JOB_PREFIX']
+for script in ['progress_reporter.py', 'gpu2runpod_observer.py']:
+    key = f'{job_prefix}/{script}'
+    dest = f'/root/data/{script}'
+    try:
+        s3.download_file(volume_id, key, dest)
+        print(f'  Downloaded {script} to {dest}')
+    except Exception as e:
+        print(f'  Skip {script}: {e}')
+"
 
 # 4. Extra requirements
 if [ -f /root/data/requirements.txt ]; then
@@ -134,8 +217,10 @@ nohup tensorboard --logdir=/root/data/runs --host=0.0.0.0 --port=6006 > /dev/nul
 ts "Running: $EXPERIMENT_CMD"
 T0=$SECONDS
 cd /root/data
+set +e
 eval "$EXPERIMENT_CMD" > >(tee /tmp/stdout.log) 2>&1
 EXIT_CODE=$?
+set -e
 ts "Training finished (exit=$EXIT_CODE, ${SECONDS}s total, $((SECONDS - T0))s training)"
 
 # 9. Stop background processes
@@ -159,7 +244,7 @@ s3 = boto3.client('s3',
     aws_access_key_id=os.environ['RUNPOD_STORAGE_ACCESS_KEY'],
     aws_secret_access_key=os.environ['RUNPOD_STORAGE_SECRET_KEY'],
     region_name=region,
-    config=Config(retries={'max_attempts': 5}, read_timeout=3600, connect_timeout=30))
+    config=Config(retries={'max_attempts': 5}, read_timeout=3600, connect_timeout=30, s3={'addressing_style': 'path'}))
 
 volume_id = os.environ['RUNPOD_STORAGE_VOLUME_ID']
 job_prefix = os.environ['RUNPOD_STORAGE_JOB_PREFIX']
@@ -168,16 +253,17 @@ exit_code = $EXIT_CODE
 uploaded = {}
 total_bytes = 0
 t0 = time.time()
+results_dir = Path('results')
 for fp in glob.glob('results/**/*', recursive=True):
     path = Path(fp)
     if path.is_file():
-        rel = str(path).replace(os.sep, '/')
-        key = f'{job_prefix}/results/{path.name}'
+        rel_path = str(path.relative_to(results_dir)).replace(os.sep, '/')
+        key = f'{job_prefix}/results/{rel_path}'
         s3.upload_file(str(path), volume_id, key)
         size = path.stat().st_size
         uploaded[key] = {'size': size}
         total_bytes += size
-        print(f'  {rel} ({size:,} bytes)')
+        print(f'  {rel_path} ({size:,} bytes)')
 
 if Path('/tmp/stdout.log').exists():
     s3.upload_file('/tmp/stdout.log', volume_id, f'{job_prefix}/logs/stdout.log')

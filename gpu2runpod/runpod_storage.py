@@ -48,8 +48,31 @@ class RunPodStorage:
                 retries={"max_attempts": 5},
                 read_timeout=3600,
                 connect_timeout=30,
+                s3={"addressing_style": "path"},
             ),
         )
+
+    def _list_all(self, prefix: str, max_objects: int = 50000) -> list:
+        """Manual pagination that handles duplicate-token bugs in RunPod S3."""
+        result = []
+        token = None
+        seen = set()
+        while True:
+            kwargs = {"Bucket": self.volume_id, "Prefix": prefix, "MaxKeys": 1000}
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = self.s3.list_objects_v2(**kwargs)
+            result.extend(resp.get("Contents", []))
+            if not resp.get("IsTruncated"):
+                break
+            next_token = resp.get("NextContinuationToken")
+            if not next_token or next_token in seen:
+                break
+            seen.add(next_token)
+            token = next_token
+            if len(result) >= max_objects:
+                break
+        return result
 
     def create_bucket(self, job_id: str) -> str:
         """Return the job prefix (no actual bucket creation needed).
@@ -125,10 +148,18 @@ class RunPodStorage:
                 manifest[key] = info
                 print(f"  Uploaded: {remote_name} ({info['size']:,} bytes)")
 
+        # Merge with any existing manifest (multiple upload_files calls accumulate)
+        existing = {}
+        try:
+            resp = self.s3.get_object(Bucket=self.volume_id, Key=f"{job_id}/manifest.json")
+            existing = json.loads(resp["Body"].read())
+        except Exception:
+            pass
+        merged = {**existing, **manifest}
         self.s3.put_object(
             Bucket=self.volume_id,
             Key=f"{job_id}/manifest.json",
-            Body=json.dumps(manifest, indent=2),
+            Body=json.dumps(merged, indent=2),
         )
         return manifest
 
@@ -141,23 +172,60 @@ class RunPodStorage:
         )
 
     def download_results(self, job_id: str, local_dir: str, sub_prefix: str = "results/",
-                         parallel: bool = True):
-        """Download results from {volume_id}/{job_id}/{sub_prefix} to local_dir."""
+                         parallel: bool = True, manifest_keys: list[str] | None = None):
+        """Download results from {volume_id}/{job_id}/{sub_prefix} to local_dir.
+
+        manifest_keys: explicit list of S3 keys to download (bypasses list_objects_v2,
+        which is broken on RunPod S3 — always returns empty). When None, tries listing
+        then falls back to done.json file list.
+        """
         prefix = f"{job_id}/{sub_prefix}"
         print(f"  [runpod-storage] Downloading {prefix} to {local_dir}")
         Path(local_dir).mkdir(parents=True, exist_ok=True)
 
         to_download = []
-        paginator = self.s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=self.volume_id, Prefix=prefix):
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                filename = key.replace(prefix, "", 1)
+
+        if manifest_keys is not None:
+            for key in manifest_keys:
+                filename = key.replace(prefix, "", 1).lstrip("/")
                 if not filename:
                     continue
                 local_path = Path(local_dir) / filename
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-                to_download.append((key, str(local_path), obj["Size"]))
+                try:
+                    head = self.s3.head_object(Bucket=self.volume_id, Key=key)
+                    size = head["ContentLength"]
+                except Exception:
+                    size = 0
+                to_download.append((key, str(local_path), size))
+        else:
+            objects = self._list_all(prefix)
+            if not objects:
+                # RunPod S3 list_objects_v2 is broken — try done.json for file manifest
+                try:
+                    done = self.get_done(job_id)
+                    if done and done.get("files"):
+                        for key, info in done["files"].items():
+                            if f"/{sub_prefix}" not in key and not key.startswith(prefix):
+                                continue
+                            filename = key.replace(prefix, "", 1).lstrip("/")
+                            if not filename:
+                                continue
+                            local_path = Path(local_dir) / filename
+                            local_path.parent.mkdir(parents=True, exist_ok=True)
+                            to_download.append((key, str(local_path), info.get("size", 0)))
+                        print(f"  [runpod-storage] Using done.json manifest ({len(to_download)} files)")
+                except Exception:
+                    pass
+            else:
+                for obj in objects:
+                    key = obj["Key"]
+                    filename = key.replace(prefix, "", 1)
+                    if not filename:
+                        continue
+                    local_path = Path(local_dir) / filename
+                    local_path.parent.mkdir(parents=True, exist_ok=True)
+                    to_download.append((key, str(local_path), obj["Size"]))
 
         downloaded = []
 
@@ -225,18 +293,64 @@ class RunPodStorage:
         except Exception:
             return None
 
+    def _collect_job_keys(self, job_id: str) -> list[str]:
+        """Collect all S3 keys for a job, working around broken list_objects_v2."""
+        key_set: set[str] = set()
+
+        # Try listing (may return empty on RunPod S3)
+        for obj in self._list_all(f"{job_id}/"):
+            key_set.add(obj["Key"])
+
+        if not key_set:
+            # Listing broken — reconstruct from manifest + done.json + standard keys
+            try:
+                resp = self.s3.get_object(Bucket=self.volume_id, Key=f"{job_id}/manifest.json")
+                manifest = json.loads(resp["Body"].read())
+                key_set.update(manifest.keys())
+                key_set.add(f"{job_id}/manifest.json")
+            except Exception:
+                pass
+            try:
+                done = self.get_done(job_id)
+                if done and done.get("files"):
+                    key_set.update(done["files"].keys())
+            except Exception:
+                pass
+            for suffix in [
+                "job_config.json", "manifest.json", "progress.json", "done.json",
+                "error.json", "gpu_metrics.json", "logs/stdout.log",
+            ]:
+                key_set.add(f"{job_id}/{suffix}")
+
+        # Filter to only keys that actually exist (head_object confirms)
+        confirmed = []
+        for key in key_set:
+            try:
+                self.s3.head_object(Bucket=self.volume_id, Key=key)
+                confirmed.append(key)
+            except Exception:
+                pass
+        return confirmed
+
     def delete_job(self, job_id: str):
         """Delete all objects under {volume_id}/{job_id}/."""
         print(f"  [runpod-storage] Deleting job prefix: {job_id}/")
         try:
-            paginator = self.s3.get_paginator("list_objects_v2")
+            keys = self._collect_job_keys(job_id)
             count = 0
-            for page in paginator.paginate(Bucket=self.volume_id, Prefix=f"{job_id}/"):
-                all_keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-                for i in range(0, len(all_keys), 1000):
-                    batch = all_keys[i:i + 1000]
+            all_keys = [{"Key": k} for k in keys]
+            for i in range(0, len(all_keys), 1000):
+                batch = all_keys[i:i + 1000]
+                try:
                     self.s3.delete_objects(Bucket=self.volume_id, Delete={"Objects": batch})
                     count += len(batch)
+                except Exception:
+                    for item in batch:
+                        try:
+                            self.s3.delete_object(Bucket=self.volume_id, Key=item["Key"])
+                            count += 1
+                        except Exception:
+                            pass
             print(f"  [runpod-storage] Deleted {count} objects for job {job_id}")
         except Exception as e:
             print(f"  [runpod-storage] Warning: cleanup error: {e}")
